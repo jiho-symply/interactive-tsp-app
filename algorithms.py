@@ -39,8 +39,8 @@ def run_nn(n, start_node, cities_df, callback):
     
     return path
 
-# --- 2. OR-Tools Routing Engine (k-opt, SA) ---
-def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_name, callback, initial_temp=None):
+# --- 2. OR-Tools Routing Engine (General) ---
+def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_name, callback):
     n = len(cities_df)
     manager = pywrapcp.RoutingIndexManager(n, 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -55,10 +55,6 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
     search_parameters.first_solution_strategy = strategy
     search_parameters.local_search_metaheuristic = metaheuristic
     search_parameters.time_limit.seconds = int(timeout)
-    
-    # SA 초기 온도 설정
-    if initial_temp is not None and initial_temp > 0:
-        search_parameters.simulated_annealing_initial_temperature = float(initial_temp)
 
     def solution_callback():
         path = []
@@ -83,7 +79,6 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
             index = solution.Value(routing.NextVar(index))
         return path
     
-    # 솔루션을 못 찾은 경우 (타임아웃 등)
     if routing.status() == 2: # ROUTING_FAIL_TIMEOUT
         raise RuntimeError("시간 초과로 솔루션을 찾지 못했습니다.")
     return list(range(n))
@@ -93,27 +88,36 @@ def run_kopt(k_val, cities_df, timeout, callback):
     meta = routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
-def run_sa(cities_df, timeout, init_strategy_name, initial_temp, callback):
-    # [수정] 정확한 Enum 상수 사용
-    strategies = {
-        "Automatic (Default)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
-        "Greedy (Path Cheapest)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
+# --- [수정] Metaheuristic 통합 함수 ---
+def run_metaheuristic(cities_df, timeout, init_strategy_name, meta_strategy_name, callback):
+    # 1. 초기화 전략 매핑
+    init_strategies = {
+        "Automatic": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
+        "Greedy": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
         "Savings": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
-        "Christofides": routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES,
-        "Random": routing_enums_pb2.FirstSolutionStrategy.RANDOM  # [수정] Correct Enum Name
+        "Sweep": routing_enums_pb2.FirstSolutionStrategy.SWEEP,
+        "Christofides": routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES
     }
     
-    strategy = strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
-    meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
+    # 2. 메타휴리스틱 전략 매핑
+    meta_strategies = {
+        "Automatic": routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC,
+        "Greedy Descent": routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT,
+        "Guided Local Search": routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH,
+        "Simulated Annealing": routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING,
+        "Tabu Search": routing_enums_pb2.LocalSearchMetaheuristic.TABU_SEARCH
+    }
+    
+    strategy = init_strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
+    meta = meta_strategies.get(meta_strategy_name, routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC)
     
     return run_routing_engine(
         cities_df=cities_df, 
         strategy=strategy, 
         metaheuristic=meta, 
         timeout=timeout, 
-        algorithm_name="Simulated Annealing", 
-        callback=callback, 
-        initial_temp=initial_temp
+        algorithm_name=meta_strategy_name, 
+        callback=callback
     )
 
 # --- 3. CP-SAT Solver (MILP 최적해) ---
@@ -176,7 +180,6 @@ def run_optimal_solver(cities_df, timeout, callback):
             path.append(curr)
         return path
     else:
-        # 상태에 따른 에러 메시지
         if status == cp_model.INFEASIBLE:
             raise RuntimeError("해를 찾을 수 없습니다 (Infeasible).")
         elif status == cp_model.MODEL_INVALID:
