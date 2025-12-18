@@ -19,9 +19,14 @@ if 'n_cities' not in st.session_state: st.session_state.n_cities = 25
 if 'cities' not in st.session_state:
     coords = np.round(np.random.rand(st.session_state.n_cities, 2) * 100, 1)
     st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
-    st.session_state.paths = {k: [] for k in ["대학원생 최적화", "MILP Solver", "Nearest Neighbor", "k-opt", "Simulated Annealing"]}
+    # [수정] Simulated Annealing -> Metaheuristic
+    st.session_state.paths = {k: [] for k in ["대학원생 최적화", "MILP Solver", "Nearest Neighbor", "k-opt", "Metaheuristic"]}
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
+    
+    # [추가] 메타휴리스틱 실행 옵션 저장용 (리더보드 표시용)
+    if 'meta_label' not in st.session_state:
+        st.session_state.meta_label = "Metaheuristic"
 
 # --- 2. 그래프 함수 (축 숨김) ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
@@ -60,7 +65,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 스레드 실행 도우미 (에러 리포팅 강화) ---
+# --- 3. 스레드 실행 도우미 ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color, timer_spot=None):
     update_queue = queue.Queue()
     result_queue = queue.Queue()
@@ -74,7 +79,6 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
             res = target_func(*args, callback=callback_wrapper)
             result_queue.put(res)
         except Exception as e:
-            # 에러 발생 시 traceback 포함하여 전달
             err_msg = f"ERROR: {str(e)}\n{traceback.format_exc()}"
             result_queue.put(err_msg)
 
@@ -92,9 +96,6 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
         try:
             path, title = update_queue.get(timeout=0.01)
             update_idx += 1
-            # [수정] Deprecation Warning 반영: use_container_width 삭제, layout으로 제어
-            # Plotly Chart의 경우 width='stretch'를 지원하지 않을 수 있으므로 인자 제거 후 theme에 맡김
-            # (Streamlit 최신 버전은 자동 반응형)
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
                 config=chart_config,
@@ -111,10 +112,9 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
 
     if not result_queue.empty():
         res = result_queue.get()
-        # 에러 처리
         if isinstance(res, str) and res.startswith("ERROR"):
             st.error("알고리즘 실행 중 오류가 발생했습니다.")
-            st.code(res) # 상세 에러 표시
+            st.code(res)
             return [], 0.0
         return res, end_time - start_time
     return [], 0.0
@@ -131,6 +131,7 @@ with st.sidebar:
         st.session_state.paths = {k: [] for k in st.session_state.paths.keys()}
         st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
         st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
+        st.session_state.meta_label = "Metaheuristic" # 초기화
         st.rerun()
 
 # --- 5. 메인 화면 ---
@@ -161,8 +162,13 @@ for k, path in st.session_state.paths.items():
             diff = ((dist - best_dist) / best_dist) * 100
             gap_str = f"+{diff:.1f}%"
     
+    # [수정] Metaheuristic의 경우 상세 옵션을 이름에 표시
+    display_name = k
+    if k == "Metaheuristic":
+        display_name = st.session_state.meta_label
+    
     res_data.append({
-        "알고리즘": k, 
+        "알고리즘": display_name, 
         "거리": dist, 
         "시간(s)": f"{exec_time:.2f}",
         "GAP": gap_str, 
@@ -172,7 +178,6 @@ for k, path in st.session_state.paths.items():
 if res_data:
     df = pd.DataFrame(res_data).sort_values(by="거리").reset_index(drop=True)
     df.index += 1
-    # [수정] Deprecation Warning 반영: use_container_width=True -> width="stretch"
     st.dataframe(
         df, 
         column_config={
@@ -182,14 +187,14 @@ if res_data:
             "GAP": st.column_config.TextColumn("Gap"),
             "상태": st.column_config.TextColumn("완료")
         },
-        width="stretch"
+        use_container_width=True
     )
 else:
     st.info("실행된 알고리즘이 없습니다.")
 
 st.divider()
 
-tabs = st.tabs(["✍️ 대학원생 최적화", "🏆 MILP Solver", "📍 Nearest Neighbor", "🔧 k-opt", "🔥 Simulated Annealing"])
+tabs = st.tabs(["✍️ 대학원생 최적화", "🏆 MILP Solver", "📍 Nearest Neighbor", "🔧 k-opt", "🧩 Metaheuristic"])
 
 # 1. 대학원생 최적화
 with tabs[0]:
@@ -202,7 +207,6 @@ with tabs[0]:
         st.rerun()
         
     graph_spot = st.empty()
-    # [수정] use_container_width 삭제
     selected = graph_spot.plotly_chart(
         draw_tsp_plot(st.session_state.cities, st.session_state.paths["대학원생 최적화"], "대학원생 최적화", "orange"), 
         on_select="rerun", config=chart_config
@@ -219,8 +223,7 @@ with tabs[0]:
 # 2. MILP Solver (Optimal)
 with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
-    
-    c1, c2 = st.columns([3, 1])
+        c1, c2 = st.columns([3, 1])
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="milp_time")
     timer_spot = c1.empty()
     
@@ -231,7 +234,6 @@ with tabs[1]:
             (st.session_state.cities, timeout), 
             graph_spot, "gold", timer_spot
         )
-        # 에러가 발생해서 빈 리스트가 오면 업데이트 하지 않음
         if res:
             st.session_state.paths["MILP Solver"] = res
             st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
@@ -285,53 +287,42 @@ with tabs[3]:
     else: 
         graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["k-opt"], "k-opt 결과", "green"), config=chart_config)
 
-# 5. Simulated Annealing
+# 5. Metaheuristic
 with tabs[4]:
-    st.markdown("""
-    > **Simulated Annealing**: 확률적 메타휴리스틱으로, 초기 온도가 높을수록 나쁜 해를 더 잘 수용합니다.
-    > * **Neighbor Search Operators**: OR-Tools가 내부적으로 **Relocate, Exchange, Cross, 2-opt** 등의 연산자를 조합하여 이웃해를 탐색합니다.
-    """)
-    
-    with st.expander("ℹ️ 초기화 전략(Initialization) 상세 설명 보기"):
-        st.markdown("""
-        * **Automatic (Default)**: OR-Tools가 문제 크기에 맞춰 자동으로 최적의 전략을 선택합니다.
-        * **Greedy (Path Cheapest)**: 가장 비용이 적은 간선부터 탐욕적으로 연결합니다. 빠르지만 초기 해의 품질이 낮을 수 있습니다.
-        * **Savings (Clarke & Wright)**: 떨어져 있는 경로를 합쳤을 때 절약되는 거리가 큰 순서대로 병합합니다. 물류 최적화에서 자주 쓰입니다.
-        * **Christofides**: 최소 신장 트리(MST)를 기반으로 오일러 회로를 구성합니다. 최적해의 1.5배 이내를 보장하지만 계산이 오래 걸릴 수 있습니다.
-        * **Random**: 무작위로 경로를 생성합니다. SA가 얼마나 나쁜 해에서 출발해도 수렴하는지 테스트할 때 유용합니다.
-        """)
-
+    st.markdown("> **Metaheuristic**: 초기 해 생성 전략과 지역 탐색(Local Search) 전략을 조합하여 최적해를 탐색합니다.")
+        
     c1, c2 = st.columns([3, 1])
     
     with c1:
         c1_1, c1_2 = st.columns(2)
+        # [수정] Initialization 옵션
         init_strategy = c1_1.selectbox(
             "초기 해 생성 (Initialization)", 
-            ["Automatic (Default)", "Greedy (Path Cheapest)", "Savings", "Christofides", "Random"],
+            ["Automatic", "Greedy", "Savings", "Sweep", "Christofides"],
             index=0
         )
-        init_temp = c1_2.number_input(
-            "초기 온도 (Initial Temp)", 
-            min_value=0, 
-            value=0, 
-            help="0으로 설정하면 OR-Tools가 데이터 분포를 분석해 자동으로 온도를 결정합니다."
+        # [수정] Metaheuristic 옵션
+        meta_strategy = c1_2.selectbox(
+            "지역 탐색 (Metaheuristic)", 
+            ["Automatic", "Greedy Descent", "Guided Local Search", "Simulated Annealing", "Tabu Search"],
+            index=3
         )
-        timeout = st.slider("실행 시간 제한 (초)", 1, 60, 10, key="sa_time")
+        timeout = st.slider("실행 시간 제한 (초)", 1, 60, 10, key="meta_time")
         timer_spot = st.empty()
     
     graph_spot = st.empty()
-    if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
-        temp_arg = init_temp if init_temp > 0 else None
-        
+    if c2.button("알고리즘 실행", key="meta", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
-            algo.run_sa, 
-            (st.session_state.cities, timeout, init_strategy, temp_arg), 
+            algo.run_metaheuristic, 
+            (st.session_state.cities, timeout, init_strategy, meta_strategy), 
             graph_spot, "purple", timer_spot
         )
         if res:
-            st.session_state.paths["Simulated Annealing"] = res
-            st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
-            st.session_state.times["Simulated Annealing"] = t
+            st.session_state.paths["Metaheuristic"] = res
+            st.session_state.scores["Metaheuristic"] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times["Metaheuristic"] = t
+            # [수정] 리더보드용 라벨 업데이트
+            st.session_state.meta_label = f"Metaheuristic ({init_strategy}, {meta_strategy})"
             st.rerun()
     else: 
-        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), config=chart_config)
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Metaheuristic"], "결과", "purple"), config=chart_config)
