@@ -22,7 +22,7 @@ if 'cities' not in st.session_state:
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
 
-# --- 2. 그래프 함수 ---
+# --- 2. 그래프 함수 (축 숨김) ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
     n_cities = len(cities_df)
     fig = go.Figure()
@@ -59,7 +59,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 스레드 실행 도우미 (타이머 기능 추가) ---
+# --- 3. 스레드 실행 도우미 (오류 로깅 강화) ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color, timer_spot=None):
     update_queue = queue.Queue()
     result_queue = queue.Queue()
@@ -73,8 +73,9 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
             res = target_func(*args, callback=callback_wrapper)
             result_queue.put(res)
         except Exception as e:
+            # 에러 발생 시 콘솔 출력 및 빈 리스트 반환
+            print(f"Algorithm Error: {e}")
             result_queue.put([])
-            print(f"Error: {e}")
 
     t = threading.Thread(target=thread_target)
     t.start()
@@ -83,14 +84,12 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
     update_idx = 0
     
     while t.is_alive():
-        # [추가] 실시간 타이머 업데이트
         elapsed = time.time() - start_time
         if timer_spot:
             timer_spot.markdown(f"### ⏱️ 경과 시간: **{elapsed:.2f}s**")
         
         try:
-            # 큐에서 데이터를 꺼내 그래프 업데이트
-            path, title = update_queue.get(timeout=0.05)
+            path, title = update_queue.get(timeout=0.01)
             update_idx += 1
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
@@ -104,7 +103,6 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
     t.join()
     end_time = time.time()
     
-    # 최종 시간 표시 고정
     if timer_spot:
         timer_spot.markdown(f"### ⏱️ 완료 시간: **{end_time - start_time:.2f}s**")
 
@@ -212,9 +210,8 @@ with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
     
     c1, c2 = st.columns([3, 1])
-    # [수정] 기본 시간 10초
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="milp_time")
-    timer_spot = c1.empty() # 타이머 표시 위치
+    timer_spot = c1.empty()
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
@@ -256,7 +253,6 @@ with tabs[3]:
     st.markdown("> **k-opt**: 경로의 일부를 끊고 재연결하여 거리를 줄이는 지역 탐색 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     k_v = c1.radio("방식 선택", ["2-opt", "3-opt"], horizontal=True)
-    # [수정] 기본 시간 10초
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="kopt_time")
     timer_spot = c1.empty()
     
@@ -276,15 +272,23 @@ with tabs[3]:
 
 # 5. Simulated Annealing
 with tabs[4]:
-    # [수정] 이웃해 탐색 방법(Neighborhood Search) 명시
     st.markdown("""
     > **Simulated Annealing**: 확률적 메타휴리스틱으로, 초기 온도가 높을수록 나쁜 해를 더 잘 수용합니다.
     > * **Neighbor Search Operators**: OR-Tools가 내부적으로 **Relocate, Exchange, Cross, 2-opt** 등의 연산자를 조합하여 이웃해를 탐색합니다.
     """)
     
+    # [설명 추가] Expander로 깔끔하게 정리
+    with st.expander("ℹ️ 초기화 전략(Initialization) 상세 설명 보기"):
+        st.markdown("""
+        * **Automatic (Default)**: OR-Tools가 문제 크기에 맞춰 자동으로 최적의 전략을 선택합니다.
+        * **Greedy (Path Cheapest)**: 가장 비용이 적은 간선부터 탐욕적으로 연결합니다. 빠르지만 초기 해의 품질이 낮을 수 있습니다.
+        * **Savings (Clarke & Wright)**: 떨어져 있는 경로를 합쳤을 때 절약되는 거리가 큰 순서대로 병합합니다. 물류 최적화에서 자주 쓰입니다.
+        * **Christofides**: 최소 신장 트리(MST)를 기반으로 오일러 회로를 구성합니다. 최적해의 1.5배 이내를 보장하지만 계산이 오래 걸릴 수 있습니다.
+        * **Random**: 무작위로 경로를 생성합니다. SA가 얼마나 나쁜 해에서 출발해도 수렴하는지 테스트할 때 유용합니다.
+        """)
+
     c1, c2 = st.columns([3, 1])
     
-    # [수정] SA 상세 옵션 추가
     with c1:
         c1_1, c1_2 = st.columns(2)
         init_strategy = c1_1.selectbox(
@@ -292,14 +296,19 @@ with tabs[4]:
             ["Automatic (Default)", "Greedy (Path Cheapest)", "Savings", "Christofides", "Random"],
             index=0
         )
-        init_temp = c1_2.number_input("초기 온도 (Initial Temp)", min_value=0, value=100, help="0이면 자동 설정")
-        # [수정] 기본 시간 10초
+        # [수정] 0을 기본값으로 설정하고 도움말 추가
+        init_temp = c1_2.number_input(
+            "초기 온도 (Initial Temp)", 
+            min_value=0, 
+            value=0, 
+            help="0으로 설정하면 OR-Tools가 데이터 분포를 분석해 자동으로 온도를 결정합니다."
+        )
         timeout = st.slider("실행 시간 제한 (초)", 1, 60, 10, key="sa_time")
         timer_spot = st.empty()
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
-        # 0이면 None으로 전달하여 OR-Tools 자동 설정 사용
+        # 0이면 None으로 변환하여 전달
         temp_arg = init_temp if init_temp > 0 else None
         
         res, t = run_algorithm_in_background(
