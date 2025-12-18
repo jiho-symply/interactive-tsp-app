@@ -21,13 +21,16 @@ def run_nn(n_cities, start_node, cities_df, callback):
         next_node = min(unvisited, key=lambda x: get_dist(last, x, cities_df))
         path.append(next_node)
         unvisited.remove(next_node)
-        callback(path, "Nearest Neighbor") # 진행 상황 업데이트
+        callback(path, "Nearest Neighbor")
         time.sleep(0.05)
     return path
 
-def run_kopt(k_val, n, init_path, cities_df, callback):
-    path = list(init_path)
+def run_kopt(k_val, n, cities_df, callback):
+    # [수정] 실행할 때마다 초기 경로 무작위 재생성
+    path = list(range(n))
+    np.random.shuffle(path)
     best_d = calculate_total_dist(path, cities_df)
+    
     while True:
         improved = False
         if k_val == "2-opt":
@@ -80,9 +83,7 @@ def run_sa(n, temp, cooling, cities_df, callback):
             if curr_d < best_d:
                 best_path, best_d = list(path), curr_d
 
-        # 경로에 '변경'이 일어났을 때만 UI 업데이트 (피드백 반영)
         if accepted:
             callback(best_path, f"SA 최적화 (T={T:.1f})", iteration)
-        
         T *= cooling
     return best_path
