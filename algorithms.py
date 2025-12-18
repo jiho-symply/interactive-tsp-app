@@ -39,7 +39,7 @@ def run_nn(n, start_node, cities_df, timeout, callback):
         unvisited.remove(next_node)
         
         callback(path, f"탐욕적 탐색 중... ({len(path)}/{n})")
-        time.sleep(0.1)
+        time.sleep(0.5) # [설정] 업데이트 속도 조절
     
     return path
 
@@ -67,7 +67,7 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
             path.append(manager.IndexToNode(index))
             index = routing.NextVar(index).Value()
         callback(path, f"{algorithm_name} 진행 중...")
-        time.sleep(0.1)
+        time.sleep(0.5) # [설정] 업데이트 속도 조절
 
     routing.AddAtSolutionCallback(solution_callback)
     
@@ -119,7 +119,7 @@ class ObjCallback(cp_model.CpSolverSolutionCallback):
                 break
         
         self.callback(path, "MILP 최적해 탐색 중...")
-        time.sleep(0.1)
+        time.sleep(0.5) # [설정] 업데이트 속도 조절
 
 def run_optimal_solver(cities_df, timeout, callback):
     n = len(cities_df)
