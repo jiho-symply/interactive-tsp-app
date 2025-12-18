@@ -51,7 +51,7 @@ def draw_graph(path, title, color="royalblue"):
         ))
     fig.update_layout(
         template="plotly_white", xaxis=dict(showgrid=False, range=[-10, 110]),
-        yaxis=dict(showgrid=False, range=[-10, 110]), height=550, showlegend=False,
+        yaxis=dict(showgrid=False, range=[-10, 110]), height=800, showlegend=False,
         title=f"실시간 렌더링: {title} (총 거리: {total_dist(path)})"
     )
     return fig
