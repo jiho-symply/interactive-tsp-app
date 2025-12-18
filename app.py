@@ -7,7 +7,7 @@ import time
 import threading
 import queue
 import traceback
-import hashlib # 해시 변환용
+import hashlib
 
 # --- 1. 초기 설정 ---
 st.set_page_config(
@@ -18,7 +18,6 @@ st.set_page_config(
 
 if 'n_cities' not in st.session_state: st.session_state.n_cities = 25
 if 'cities' not in st.session_state:
-    # 초기 실행 시에는 랜덤 생성
     coords = np.round(np.random.rand(st.session_state.n_cities, 2) * 100, 1)
     st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
     st.session_state.paths = {k: [] for k in ["대학원생 최적화", "MILP Solver", "Nearest Neighbor", "k-opt", "Metaheuristic"]}
@@ -121,21 +120,24 @@ with st.sidebar:
     st.header("🎮 맵 설정")
     num_cities = st.number_input("도시 개수 선택", min_value=5, max_value=100, value=st.session_state.n_cities)
     
-    # [수정] 랜덤 시드 입력 기능
-    seed_text = st.text_input("맵 시드 (Random Code)", placeholder="여기에 코드를 입력하면 맵이 고정됩니다.")
+    # [수정] 라벨, 도움말, 플레이스홀더 개선
+    seed_text = st.text_input(
+        "도시 생성 코드", 
+        placeholder="예: map1 (비워두면 랜덤)",
+        help="특정 코드를 입력하면 항상 동일한 위치에 도시가 생성됩니다. (친구와 대결할 때 유용!) 비워두면 매번 무작위로 생성됩니다."
+    )
     
     if st.button("도시 생성", use_container_width=True, type="primary"):
         st.session_state.n_cities = num_cities
         
-        # [수정] 시드 처리 로직 (도시 위치에만 영향)
+        # 시드 설정 (위치 고정용)
         if seed_text:
-            # 문자열을 해시하여 정수 시드 생성
             seed_val = int(hashlib.md5(seed_text.encode('utf-8')).hexdigest(), 16) % (2**32)
             np.random.seed(seed_val)
         
         coords = np.round(np.random.rand(num_cities, 2) * 100, 1)
         
-        # [수정] 중요: 도시 생성 후 시드 초기화 (알고리즘 랜덤성 보장)
+        # 시드 해제 (알고리즘 랜덤성 보장)
         if seed_text:
             np.random.seed(None)
             
@@ -173,7 +175,6 @@ for k, path in st.session_state.paths.items():
             diff = ((dist - best_dist) / best_dist) * 100
             gap_str = f"+{diff:.1f}%"
     
-    # [수정] 리더보드에 그냥 원래 이름(Key)만 사용
     res_data.append({
         "알고리즘": k, 
         "거리": dist, 
@@ -232,7 +233,7 @@ with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
     
     c1, c2 = st.columns([3, 1])
-    # [수정] 시간 제한 Max 20초, 기본 5초
+    # [수정] Max 20초, Default 5초
     timeout = c1.slider("실행 시간 제한 (초)", 1, 20, 5, key="milp_time")
     timer_spot = c1.empty()
     
@@ -278,7 +279,7 @@ with tabs[3]:
     st.markdown("> **k-opt**: 경로의 일부를 끊고 재연결하여 거리를 줄이는 지역 탐색 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     k_v = c1.radio("방식 선택", ["2-opt", "3-opt"], horizontal=True)
-    # [수정] 시간 제한 Max 20초, 기본 5초
+    # [수정] Max 20초, Default 5초
     timeout = c1.slider("실행 시간 제한 (초)", 1, 20, 5, key="kopt_time")
     timer_spot = c1.empty()
     
@@ -327,7 +328,7 @@ with tabs[4]:
             ["Automatic", "Greedy Descent", "Guided Local Search", "Simulated Annealing", "Tabu Search"],
             index=3
         )
-        # [수정] 시간 제한 Max 20초, 기본 5초
+        # [수정] Max 20초, Default 5초
         timeout = st.slider("실행 시간 제한 (초)", 1, 20, 5, key="meta_time")
         timer_spot = st.empty()
         
