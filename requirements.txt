@@ -3,4 +3,4 @@ pandas
 numpy
 plotly
 cython
-git+https://github.com/jm-cardoso/pyconcorde.git@master
+pyconcorde @ git+https://github.com/jvkersch/pyconcorde
