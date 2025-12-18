@@ -22,12 +22,11 @@ if 'cities' not in st.session_state:
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
 
-# --- 2. 그래프 함수 (축 숨김 적용) ---
+# --- 2. 그래프 함수 (축 숨김) ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
     n_cities = len(cities_df)
     fig = go.Figure()
     
-    # 도시 그리기
     fig.add_trace(go.Scatter(
         x=cities_df.x, y=cities_df.y,
         mode='markers+text', 
@@ -37,7 +36,6 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
         name="도시"
     ))
     
-    # 경로 그리기
     if path and len(path) > 0:
         d_path = path + [path[0]] if len(path) == n_cities else path
         coords = cities_df.iloc[d_path]
@@ -50,7 +48,6 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
     
     fig.update_layout(
         template="plotly_white",
-        # [수정] visible=False로 축과 눈금 완전히 숨김 (비율 고정은 유지)
         xaxis=dict(visible=False, range=[-5, 105], constrain="domain", fixedrange=True),
         yaxis=dict(visible=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
         height=900,
@@ -62,7 +59,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 스레드 실행 도우미 함수 ---
+# --- 3. 스레드 실행 도우미 ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
     update_queue = queue.Queue()
     result_queue = queue.Queue()
@@ -87,7 +84,7 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
     
     while t.is_alive():
         try:
-            path, title = update_queue.get(timeout=0.01) # 대기 시간 단축
+            path, title = update_queue.get(timeout=0.01)
             update_idx += 1
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
@@ -211,20 +208,9 @@ with tabs[1]:
     if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_optimal_solver, 
-            (timeout, ), # cities_df는 app.py가 아닌 algorithms.py에서 처리X -> session state 전달 안함 (복사본으로 처리)
-            # 주의: run_algorithm_in_background 수정 필요. 
-            # 현재 구조: args에 (timeout,) 만 넘기면 algorithms.py 함수는 cities_df를 못 받음.
-            # algorithms.py 함수 시그니처: run_optimal_solver(cities_df, timeout, callback)
-            # 따라서 args는 (st.session_state.cities, timeout) 이어야 함.
-            graph_spot, "gold"
-        )
-        # 위 주석 설명대로 아래 호출부 수정됨
-        res, t = run_algorithm_in_background(
-            algo.run_optimal_solver, 
             (st.session_state.cities, timeout), 
             graph_spot, "gold"
         )
-
         st.session_state.paths["MILP Solver"] = res
         st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
         st.session_state.times["MILP Solver"] = t
@@ -237,15 +223,27 @@ with tabs[2]:
     st.markdown("> **Nearest Neighbor**: 현재 위치에서 가장 가까운 도시를 찾아가는 탐욕 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     start_node = c1.selectbox("시작 도시", range(st.session_state.n_cities), format_func=lambda x: f"도시 {x+1}")
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="nn_time")
+    # [수정] NN 시간 제한 슬라이더 제거
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="nn", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_nn, 
-            (st.session_state.n_cities, start_node, st.session_state.cities, timeout), 
+            (st.session_state.n_cities, start_node, st.session_state.cities, cb), # cb는 run_algorithm_in_background에서 자동 처리
+            # [수정] 인자 목록에서 timeout 제거
             graph_spot, "royalblue"
         )
+        # 주의: run_algorithm_in_background는 내부적으로 콜백을 래핑함. 
+        # run_nn의 인자는 (n, start_node, cities_df, callback) 순서.
+        # run_algorithm_in_background(algo.run_nn, (args...), graph_spot, color)
+        
+        # 다시 올바르게 호출
+        res, t = run_algorithm_in_background(
+            algo.run_nn, 
+            (st.session_state.n_cities, start_node, st.session_state.cities), 
+            graph_spot, "royalblue"
+        )
+        
         st.session_state.paths["Nearest Neighbor"] = res
         st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
         st.session_state.times["Nearest Neighbor"] = t
@@ -276,7 +274,12 @@ with tabs[3]:
 
 # 5. Simulated Annealing
 with tabs[4]:
-    st.markdown("> **Simulated Annealing**: 확률적으로 나쁜 해를 수용하며 전역 최적해를 찾는 담금질 기법입니다.")
+    # [수정] 초기화 방식과 휴리스틱 정보 표시
+    st.markdown("""
+    > **Simulated Annealing**: 확률적으로 나쁜 해를 수용하며 전역 최적해를 찾는 담금질 기법입니다.
+    > * **Initialization**: Automatic (Greedy)
+    > * **Metaheuristic**: Simulated Annealing
+    """)
     c1, c2 = st.columns([3, 1])
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 30, key="sa_time")
     
