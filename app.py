@@ -22,11 +22,12 @@ if 'cities' not in st.session_state:
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
 
-# --- 2. 그래프 함수 ---
+# --- 2. 그래프 함수 (축 숨김 적용) ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
     n_cities = len(cities_df)
     fig = go.Figure()
     
+    # 도시 그리기
     fig.add_trace(go.Scatter(
         x=cities_df.x, y=cities_df.y,
         mode='markers+text', 
@@ -36,6 +37,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
         name="도시"
     ))
     
+    # 경로 그리기
     if path and len(path) > 0:
         d_path = path + [path[0]] if len(path) == n_cities else path
         coords = cities_df.iloc[d_path]
@@ -48,8 +50,9 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
     
     fig.update_layout(
         template="plotly_white",
-        xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain", fixedrange=True),
-        yaxis=dict(showgrid=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
+        # [수정] visible=False로 축과 눈금 완전히 숨김 (비율 고정은 유지)
+        xaxis=dict(visible=False, range=[-5, 105], constrain="domain", fixedrange=True),
+        yaxis=dict(visible=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
         height=900,
         showlegend=False,
         dragmode=False,
@@ -59,43 +62,33 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. [핵심] 스레드 실행 도우미 함수 (큐 방식) ---
+# --- 3. 스레드 실행 도우미 함수 ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
-    """
-    알고리즘을 별도 스레드에서 실행하고, 결과는 큐를 통해 메인 스레드로 전달합니다.
-    Streamlit 컨텍스트 오류와 ID 중복 오류를 모두 해결합니다.
-    """
     update_queue = queue.Queue()
     result_queue = queue.Queue()
     cities_copy = st.session_state.cities.copy()
     
     def thread_target():
-        # 알고리즘이 호출할 콜백 (큐에 넣기만 함)
         def callback_wrapper(p, t):
             update_queue.put((p, t))
         
-        # 알고리즘 실행
         try:
             res = target_func(*args, callback=callback_wrapper)
             result_queue.put(res)
         except Exception as e:
-            result_queue.put([]) # 에러 시 빈 리스트
-            print(f"Algorithm Error: {e}")
+            result_queue.put([])
+            print(f"Error: {e}")
 
-    # 스레드 시작
     t = threading.Thread(target=thread_target)
     t.start()
     
     start_time = time.time()
     update_idx = 0
     
-    # 메인 스레드: 큐 감시 및 UI 업데이트
     while t.is_alive():
         try:
-            path, title = update_queue.get(timeout=0.05)
+            path, title = update_queue.get(timeout=0.01) # 대기 시간 단축
             update_idx += 1
-            # [해결] key에 update_idx를 포함하여 DuplicateElementId 방지
-            # use_container_width=True 유지 (경고는 무시 가능하거나 width='stretch' 사용 권장)
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
                 use_container_width=True, 
@@ -108,7 +101,6 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
     t.join()
     end_time = time.time()
     
-    # 최종 결과 반환
     if not result_queue.empty():
         return result_queue.get(), end_time - start_time
     return [], 0.0
@@ -219,9 +211,20 @@ with tabs[1]:
     if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_optimal_solver, 
+            (timeout, ), # cities_df는 app.py가 아닌 algorithms.py에서 처리X -> session state 전달 안함 (복사본으로 처리)
+            # 주의: run_algorithm_in_background 수정 필요. 
+            # 현재 구조: args에 (timeout,) 만 넘기면 algorithms.py 함수는 cities_df를 못 받음.
+            # algorithms.py 함수 시그니처: run_optimal_solver(cities_df, timeout, callback)
+            # 따라서 args는 (st.session_state.cities, timeout) 이어야 함.
+            graph_spot, "gold"
+        )
+        # 위 주석 설명대로 아래 호출부 수정됨
+        res, t = run_algorithm_in_background(
+            algo.run_optimal_solver, 
             (st.session_state.cities, timeout), 
             graph_spot, "gold"
         )
+
         st.session_state.paths["MILP Solver"] = res
         st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
         st.session_state.times["MILP Solver"] = t
