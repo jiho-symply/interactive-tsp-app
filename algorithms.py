@@ -36,7 +36,6 @@ def run_nn(n, start_node, cities_df, callback):
         unvisited.remove(next_node)
         
         callback(path, f"탐욕적 탐색 중... ({len(path)}/{n})")
-        # NN은 빠르므로 딜레이 없음
     
     return path
 
@@ -53,15 +52,13 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-    
-    # 전략 및 메타휴리스틱 설정
     search_parameters.first_solution_strategy = strategy
     search_parameters.local_search_metaheuristic = metaheuristic
     search_parameters.time_limit.seconds = int(timeout)
     
-    # SA 전용 옵션: 초기 온도 설정
-    if initial_temp is not None:
-        search_parameters.simulated_annealing_initial_temperature = initial_temp
+    # SA 초기 온도 설정 (값이 있을 때만 적용)
+    if initial_temp is not None and initial_temp > 0:
+        search_parameters.simulated_annealing_initial_temperature = float(initial_temp)
 
     def solution_callback():
         path = []
@@ -90,19 +87,29 @@ def run_kopt(k_val, cities_df, timeout, callback):
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
 def run_sa(cities_df, timeout, init_strategy_name, initial_temp, callback):
-    # 전략 매핑
+    # 전략 매핑 (이름이 정확히 일치해야 함)
     strategies = {
         "Automatic (Default)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
         "Greedy (Path Cheapest)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
         "Savings": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
         "Christofides": routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES,
-        "Random": routing_enums_pb2.FirstSolutionStrategy.Random
+        "Random": routing_enums_pb2.FirstSolutionStrategy.ROUTING_RANDOM_SOLVE  # OR-Tools Random
     }
     
+    # 기본값은 AUTOMATIC
     strategy = strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
     meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
     
-    return run_routing_engine(cities_df, strategy, meta, timeout, "Simulated Annealing", callback, initial_temp)
+    # run_routing_engine 호출 시 인자 순서 주의
+    return run_routing_engine(
+        cities_df=cities_df, 
+        strategy=strategy, 
+        metaheuristic=meta, 
+        timeout=timeout, 
+        algorithm_name="Simulated Annealing", 
+        callback=callback, 
+        initial_temp=initial_temp
+    )
 
 # --- 3. CP-SAT Solver (MILP 최적해) ---
 class ObjCallback(cp_model.CpSolverSolutionCallback):
