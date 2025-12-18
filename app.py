@@ -4,7 +4,8 @@ import numpy as np
 import plotly.graph_objects as go
 import algorithms as algo
 import time
-from streamlit.runtime.scriptrunner import get_script_run_ctx # 컨텍스트 획득용
+import threading
+import queue
 
 # --- 1. 초기 설정 ---
 st.set_page_config(
@@ -13,17 +14,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 세션 초기화
 if 'n_cities' not in st.session_state: st.session_state.n_cities = 25
 if 'cities' not in st.session_state:
     coords = np.round(np.random.rand(st.session_state.n_cities, 2) * 100, 1)
     st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
     st.session_state.paths = {k: [] for k in ["대학원생 최적화", "MILP Solver", "Nearest Neighbor", "k-opt", "Simulated Annealing"]}
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
-    # [추가] 실행 시간 저장
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
 
-# 그래프 함수
+# --- 2. 그래프 함수 ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
     n_cities = len(cities_df)
     fig = go.Figure()
@@ -51,7 +50,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
         template="plotly_white",
         xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain", fixedrange=True),
         yaxis=dict(showgrid=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
-        height=700,
+        height=900,
         showlegend=False,
         dragmode=False,
         title=f"{title} (거리: {algo.calculate_total_dist(path, cities_df)})"
@@ -60,10 +59,49 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 2. 사이드바 (설정만 남김) ---
+# --- 3. [핵심] 스레드 실행 도우미 함수 ---
+def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
+    """알고리즘을 별도 스레드에서 실행하고 UI를 메인 스레드에서 업데이트합니다."""
+    
+    # 데이터 통신용 큐 생성
+    update_queue = queue.Queue()
+    result_queue = queue.Queue()
+    
+    cities_copy = st.session_state.cities.copy()
+    
+    # 스레드에서 실행할 래퍼 함수
+    def thread_target():
+        # 알고리즘 콜백: 진행 상황을 큐에 넣음
+        def callback_wrapper(p, t):
+            update_queue.put((p, t))
+            
+        # 실제 알고리즘 실행
+        res = target_func(*args, callback=callback_wrapper)
+        result_queue.put(res)
+
+    # 스레드 시작
+    t = threading.Thread(target=thread_target)
+    t.start()
+    
+    start_time = time.time()
+    
+    # 메인 스레드: 큐를 감시하며 UI 업데이트
+    while t.is_alive():
+        try:
+            # 큐에서 데이터 꺼내기 (비차단)
+            path, title = update_queue.get(timeout=0.05)
+            graph_spot.plotly_chart(draw_tsp_plot(cities_copy, path, title, chart_color), use_container_width=True, config=chart_config)
+        except queue.Empty:
+            pass
+            
+    t.join() # 스레드 종료 대기
+    
+    end_time = time.time()
+    return result_queue.get(), end_time - start_time
+
+# --- 4. 사이드바 ---
 with st.sidebar:
     st.header("🎮 맵 설정")
-    # [수정] 최대 도시 100개로 확장
     num_cities = st.number_input("도시 개수 선택", min_value=5, max_value=100, value=st.session_state.n_cities)
     
     if st.button("도시 생성", use_container_width=True, type="primary"):
@@ -75,10 +113,9 @@ with st.sidebar:
         st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
         st.rerun()
 
-# --- 3. 메인 화면 ---
+# --- 5. 메인 화면 ---
 st.title("🏙️ TSP 시뮬레이터")
 
-# [수정] 결과 비교표를 메인 최상단으로 이동
 st.subheader("📊 결과 비교표 (Leaderboard)")
 res_data = []
 best_dist = float('inf')
@@ -120,7 +157,7 @@ if res_data:
         column_config={
             "알고리즘": st.column_config.TextColumn("알고리즘", width="medium"),
             "거리": st.column_config.NumberColumn("거리", format="%.1f"),
-            "시간(s)": st.column_config.TextColumn("시간(s)"), # [추가] 실행 시간 컬럼
+            "시간(s)": st.column_config.TextColumn("시간(s)"),
             "GAP": st.column_config.TextColumn("Gap"),
             "상태": st.column_config.TextColumn("완료")
         },
@@ -131,7 +168,6 @@ else:
 
 st.divider()
 
-# 탭 구성
 tabs = st.tabs(["✍️ 대학원생 최적화", "🏆 MILP Solver", "📍 Nearest Neighbor", "🔧 k-opt", "🔥 Simulated Annealing"])
 
 # 1. 대학원생 최적화
@@ -161,25 +197,20 @@ with tabs[0]:
 # 2. MILP Solver (Optimal)
 with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
+    
     c1, c2 = st.columns([3, 1])
-    # [추가] 시간 제한 슬라이더
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 30, key="milp_time")
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
-        cities_copy = st.session_state.cities.copy()
-        ctx = get_script_run_ctx() # [핵심] 현재 스레드 컨텍스트 캡처
-        
-        def cb(p, t): 
-            graph_spot.plotly_chart(draw_tsp_plot(cities_copy, p, t, "gold"), use_container_width=True, config=chart_config)
-            
-        start_t = time.time()
-        res = algo.run_optimal_solver(st.session_state.cities, timeout, ctx, cb)
-        end_t = time.time()
-        
+        res, t = run_algorithm_in_background(
+            algo.run_optimal_solver, 
+            (st.session_state.cities, timeout), 
+            graph_spot, "gold"
+        )
         st.session_state.paths["MILP Solver"] = res
         st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["MILP Solver"] = end_t - start_t
+        st.session_state.times["MILP Solver"] = t
         st.rerun()
     else: 
         graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["MILP Solver"], "MILP 최적해", "gold"), use_container_width=True, config=chart_config)
@@ -193,18 +224,17 @@ with tabs[2]:
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="nn", type="primary", use_container_width=True):
-        cities_copy = st.session_state.cities.copy()
-        def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(cities_copy, p, t, "royalblue"), use_container_width=True, config=chart_config)
-        
-        start_t = time.time()
-        res = algo.run_nn(st.session_state.n_cities, start_node, st.session_state.cities, timeout, cb)
-        end_t = time.time()
-        
+        res, t = run_algorithm_in_background(
+            algo.run_nn, 
+            (st.session_state.n_cities, start_node, st.session_state.cities, timeout), 
+            graph_spot, "royalblue"
+        )
         st.session_state.paths["Nearest Neighbor"] = res
         st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["Nearest Neighbor"] = end_t - start_t
+        st.session_state.times["Nearest Neighbor"] = t
         st.rerun()
-    else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Nearest Neighbor"], "NN 결과", "royalblue"), use_container_width=True, config=chart_config)
+    else: 
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Nearest Neighbor"], "NN 결과", "royalblue"), use_container_width=True, config=chart_config)
 
 # 4. k-opt
 with tabs[3]:
@@ -215,19 +245,17 @@ with tabs[3]:
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="kopt", type="primary", use_container_width=True):
-        cities_copy = st.session_state.cities.copy()
-        ctx = get_script_run_ctx()
-        def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(cities_copy, p, t, "green"), use_container_width=True, config=chart_config)
-        
-        start_t = time.time()
-        res = algo.run_kopt(k_v, st.session_state.cities, timeout, ctx, cb)
-        end_t = time.time()
-        
+        res, t = run_algorithm_in_background(
+            algo.run_kopt, 
+            (k_v, st.session_state.cities, timeout), 
+            graph_spot, "green"
+        )
         st.session_state.paths["k-opt"] = res
         st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["k-opt"] = end_t - start_t
+        st.session_state.times["k-opt"] = t
         st.rerun()
-    else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["k-opt"], "k-opt 결과", "green"), use_container_width=True, config=chart_config)
+    else: 
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["k-opt"], "k-opt 결과", "green"), use_container_width=True, config=chart_config)
 
 # 5. Simulated Annealing
 with tabs[4]:
@@ -237,16 +265,14 @@ with tabs[4]:
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
-        cities_copy = st.session_state.cities.copy()
-        ctx = get_script_run_ctx()
-        def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(cities_copy, p, t, "purple"), use_container_width=True, config=chart_config)
-        
-        start_t = time.time()
-        res = algo.run_sa(st.session_state.cities, timeout, ctx, cb)
-        end_t = time.time()
-        
+        res, t = run_algorithm_in_background(
+            algo.run_sa, 
+            (st.session_state.cities, timeout), 
+            graph_spot, "purple"
+        )
         st.session_state.paths["Simulated Annealing"] = res
         st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["Simulated Annealing"] = end_t - start_t
+        st.session_state.times["Simulated Annealing"] = t
         st.rerun()
-    else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), use_container_width=True, config=chart_config)
+    else: 
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), use_container_width=True, config=chart_config)
