@@ -6,6 +6,7 @@ import algorithms as algo
 import time
 import threading
 import queue
+import traceback
 
 # --- 1. 초기 설정 ---
 st.set_page_config(
@@ -59,7 +60,7 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 스레드 실행 도우미 (오류 로깅 강화) ---
+# --- 3. 스레드 실행 도우미 (에러 리포팅 강화) ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color, timer_spot=None):
     update_queue = queue.Queue()
     result_queue = queue.Queue()
@@ -73,9 +74,9 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
             res = target_func(*args, callback=callback_wrapper)
             result_queue.put(res)
         except Exception as e:
-            # 에러 발생 시 콘솔 출력 및 빈 리스트 반환
-            print(f"Algorithm Error: {e}")
-            result_queue.put([])
+            # 에러 발생 시 traceback 포함하여 전달
+            err_msg = f"ERROR: {str(e)}\n{traceback.format_exc()}"
+            result_queue.put(err_msg)
 
     t = threading.Thread(target=thread_target)
     t.start()
@@ -91,9 +92,11 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
         try:
             path, title = update_queue.get(timeout=0.01)
             update_idx += 1
+            # [수정] Deprecation Warning 반영: use_container_width 삭제, layout으로 제어
+            # Plotly Chart의 경우 width='stretch'를 지원하지 않을 수 있으므로 인자 제거 후 theme에 맡김
+            # (Streamlit 최신 버전은 자동 반응형)
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
-                use_container_width=True, 
                 config=chart_config,
                 key=f"live_{chart_color}_{update_idx}"
             )
@@ -107,7 +110,13 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color, time
         timer_spot.markdown(f"### ⏱️ 완료 시간: **{end_time - start_time:.2f}s**")
 
     if not result_queue.empty():
-        return result_queue.get(), end_time - start_time
+        res = result_queue.get()
+        # 에러 처리
+        if isinstance(res, str) and res.startswith("ERROR"):
+            st.error("알고리즘 실행 중 오류가 발생했습니다.")
+            st.code(res) # 상세 에러 표시
+            return [], 0.0
+        return res, end_time - start_time
     return [], 0.0
 
 # --- 4. 사이드바 ---
@@ -163,6 +172,7 @@ for k, path in st.session_state.paths.items():
 if res_data:
     df = pd.DataFrame(res_data).sort_values(by="거리").reset_index(drop=True)
     df.index += 1
+    # [수정] Deprecation Warning 반영: use_container_width=True -> width="stretch"
     st.dataframe(
         df, 
         column_config={
@@ -172,7 +182,7 @@ if res_data:
             "GAP": st.column_config.TextColumn("Gap"),
             "상태": st.column_config.TextColumn("완료")
         },
-        use_container_width=True
+        width="stretch"
     )
 else:
     st.info("실행된 알고리즘이 없습니다.")
@@ -192,9 +202,10 @@ with tabs[0]:
         st.rerun()
         
     graph_spot = st.empty()
+    # [수정] use_container_width 삭제
     selected = graph_spot.plotly_chart(
         draw_tsp_plot(st.session_state.cities, st.session_state.paths["대학원생 최적화"], "대학원생 최적화", "orange"), 
-        on_select="rerun", use_container_width=True, config=chart_config
+        on_select="rerun", config=chart_config
     )
     
     if selected and "selection" in selected and selected["selection"]["point_indices"]:
@@ -220,12 +231,14 @@ with tabs[1]:
             (st.session_state.cities, timeout), 
             graph_spot, "gold", timer_spot
         )
-        st.session_state.paths["MILP Solver"] = res
-        st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["MILP Solver"] = t
-        st.rerun()
+        # 에러가 발생해서 빈 리스트가 오면 업데이트 하지 않음
+        if res:
+            st.session_state.paths["MILP Solver"] = res
+            st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times["MILP Solver"] = t
+            st.rerun()
     else: 
-        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["MILP Solver"], "MILP 최적해", "gold"), use_container_width=True, config=chart_config)
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["MILP Solver"], "MILP 최적해", "gold"), config=chart_config)
 
 # 3. Nearest Neighbor
 with tabs[2]:
@@ -241,12 +254,13 @@ with tabs[2]:
             (st.session_state.n_cities, start_node, st.session_state.cities), 
             graph_spot, "royalblue", timer_spot
         )
-        st.session_state.paths["Nearest Neighbor"] = res
-        st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["Nearest Neighbor"] = t
-        st.rerun()
+        if res:
+            st.session_state.paths["Nearest Neighbor"] = res
+            st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times["Nearest Neighbor"] = t
+            st.rerun()
     else: 
-        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Nearest Neighbor"], "NN 결과", "royalblue"), use_container_width=True, config=chart_config)
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Nearest Neighbor"], "NN 결과", "royalblue"), config=chart_config)
 
 # 4. k-opt
 with tabs[3]:
@@ -263,12 +277,13 @@ with tabs[3]:
             (k_v, st.session_state.cities, timeout), 
             graph_spot, "green", timer_spot
         )
-        st.session_state.paths["k-opt"] = res
-        st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["k-opt"] = t
-        st.rerun()
+        if res:
+            st.session_state.paths["k-opt"] = res
+            st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times["k-opt"] = t
+            st.rerun()
     else: 
-        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["k-opt"], "k-opt 결과", "green"), use_container_width=True, config=chart_config)
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["k-opt"], "k-opt 결과", "green"), config=chart_config)
 
 # 5. Simulated Annealing
 with tabs[4]:
@@ -277,7 +292,6 @@ with tabs[4]:
     > * **Neighbor Search Operators**: OR-Tools가 내부적으로 **Relocate, Exchange, Cross, 2-opt** 등의 연산자를 조합하여 이웃해를 탐색합니다.
     """)
     
-    # [설명 추가] Expander로 깔끔하게 정리
     with st.expander("ℹ️ 초기화 전략(Initialization) 상세 설명 보기"):
         st.markdown("""
         * **Automatic (Default)**: OR-Tools가 문제 크기에 맞춰 자동으로 최적의 전략을 선택합니다.
@@ -296,7 +310,6 @@ with tabs[4]:
             ["Automatic (Default)", "Greedy (Path Cheapest)", "Savings", "Christofides", "Random"],
             index=0
         )
-        # [수정] 0을 기본값으로 설정하고 도움말 추가
         init_temp = c1_2.number_input(
             "초기 온도 (Initial Temp)", 
             min_value=0, 
@@ -308,7 +321,6 @@ with tabs[4]:
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
-        # 0이면 None으로 변환하여 전달
         temp_arg = init_temp if init_temp > 0 else None
         
         res, t = run_algorithm_in_background(
@@ -316,9 +328,10 @@ with tabs[4]:
             (st.session_state.cities, timeout, init_strategy, temp_arg), 
             graph_spot, "purple", timer_spot
         )
-        st.session_state.paths["Simulated Annealing"] = res
-        st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
-        st.session_state.times["Simulated Annealing"] = t
-        st.rerun()
+        if res:
+            st.session_state.paths["Simulated Annealing"] = res
+            st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times["Simulated Annealing"] = t
+            st.rerun()
     else: 
-        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), use_container_width=True, config=chart_config)
+        graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), config=chart_config)
