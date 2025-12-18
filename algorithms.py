@@ -56,7 +56,7 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
     search_parameters.local_search_metaheuristic = metaheuristic
     search_parameters.time_limit.seconds = int(timeout)
     
-    # SA 초기 온도 설정 (값이 있을 때만 적용)
+    # SA 초기 온도 설정
     if initial_temp is not None and initial_temp > 0:
         search_parameters.simulated_annealing_initial_temperature = float(initial_temp)
 
@@ -70,7 +70,10 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
 
     routing.AddAtSolutionCallback(solution_callback)
     
-    solution = routing.SolveWithParameters(search_parameters)
+    try:
+        solution = routing.SolveWithParameters(search_parameters)
+    except Exception as e:
+        raise RuntimeError(f"Solver Error: {str(e)}")
     
     if solution:
         path = []
@@ -79,6 +82,10 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
             path.append(manager.IndexToNode(index))
             index = solution.Value(routing.NextVar(index))
         return path
+    
+    # 솔루션을 못 찾은 경우 (타임아웃 등)
+    if routing.status() == 2: # ROUTING_FAIL_TIMEOUT
+        raise RuntimeError("시간 초과로 솔루션을 찾지 못했습니다.")
     return list(range(n))
 
 def run_kopt(k_val, cities_df, timeout, callback):
@@ -87,20 +94,18 @@ def run_kopt(k_val, cities_df, timeout, callback):
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
 def run_sa(cities_df, timeout, init_strategy_name, initial_temp, callback):
-    # 전략 매핑 (이름이 정확히 일치해야 함)
+    # [수정] 정확한 Enum 상수 사용
     strategies = {
         "Automatic (Default)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
         "Greedy (Path Cheapest)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
         "Savings": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
         "Christofides": routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES,
-        "Random": routing_enums_pb2.FirstSolutionStrategy.ROUTING_RANDOM_SOLVE  # OR-Tools Random
+        "Random": routing_enums_pb2.FirstSolutionStrategy.RANDOM  # [수정] Correct Enum Name
     }
     
-    # 기본값은 AUTOMATIC
     strategy = strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
     meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
     
-    # run_routing_engine 호출 시 인자 순서 주의
     return run_routing_engine(
         cities_df=cities_df, 
         strategy=strategy, 
@@ -170,4 +175,13 @@ def run_optimal_solver(cities_df, timeout, callback):
             curr = next_node[curr]
             path.append(curr)
         return path
+    else:
+        # 상태에 따른 에러 메시지
+        if status == cp_model.INFEASIBLE:
+            raise RuntimeError("해를 찾을 수 없습니다 (Infeasible).")
+        elif status == cp_model.MODEL_INVALID:
+            raise RuntimeError("모델이 잘못되었습니다.")
+        elif status == cp_model.UNKNOWN:
+            raise RuntimeError("시간 초과 또는 해를 찾지 못했습니다.")
+            
     return []
