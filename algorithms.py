@@ -19,7 +19,7 @@ def calculate_total_dist(path, cities_df):
     d += np.sqrt((c1.x - c2.x)**2 + (c1.y - c2.y)**2)
     return round(d, 1)
 
-# --- 1. Nearest Neighbor (시간 제한 제거) ---
+# --- 1. Nearest Neighbor ---
 def run_nn(n, start_node, cities_df, callback):
     path = [start_node]
     unvisited = set(range(n)) - {start_node}
@@ -36,12 +36,12 @@ def run_nn(n, start_node, cities_df, callback):
         unvisited.remove(next_node)
         
         callback(path, f"탐욕적 탐색 중... ({len(path)}/{n})")
-        # NN은 별도 딜레이 없이 최대한 빠르게 수행 (필요시 time.sleep(0.1) 추가 가능)
+        # NN은 빠르므로 딜레이 없음
     
     return path
 
 # --- 2. OR-Tools Routing Engine (k-opt, SA) ---
-def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_name, callback):
+def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_name, callback, initial_temp=None):
     n = len(cities_df)
     manager = pywrapcp.RoutingIndexManager(n, 1, 0)
     routing = pywrapcp.RoutingModel(manager)
@@ -53,9 +53,15 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
     routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
     search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+    
+    # 전략 및 메타휴리스틱 설정
     search_parameters.first_solution_strategy = strategy
     search_parameters.local_search_metaheuristic = metaheuristic
     search_parameters.time_limit.seconds = int(timeout)
+    
+    # SA 전용 옵션: 초기 온도 설정
+    if initial_temp is not None:
+        search_parameters.simulated_annealing_initial_temperature = initial_temp
 
     def solution_callback():
         path = []
@@ -83,11 +89,20 @@ def run_kopt(k_val, cities_df, timeout, callback):
     meta = routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
-def run_sa(cities_df, timeout, callback):
-    # SA 설정: 초기해는 AUTOMATIC(보통 Cheapest Arc), 메타휴리스틱은 SIMULATED_ANNEALING
-    strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
+def run_sa(cities_df, timeout, init_strategy_name, initial_temp, callback):
+    # 전략 매핑
+    strategies = {
+        "Automatic (Default)": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
+        "Greedy (Path Cheapest)": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
+        "Savings": routing_enums_pb2.FirstSolutionStrategy.SAVINGS,
+        "Christofides": routing_enums_pb2.FirstSolutionStrategy.CHRISTOFIDES,
+        "Random": routing_enums_pb2.FirstSolutionStrategy.Random
+    }
+    
+    strategy = strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
     meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
-    return run_routing_engine(cities_df, strategy, meta, timeout, "Simulated Annealing", callback)
+    
+    return run_routing_engine(cities_df, strategy, meta, timeout, "Simulated Annealing", callback, initial_temp)
 
 # --- 3. CP-SAT Solver (MILP 최적해) ---
 class ObjCallback(cp_model.CpSolverSolutionCallback):
