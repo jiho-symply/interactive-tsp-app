@@ -7,6 +7,7 @@ import time
 import threading
 import queue
 import traceback
+import hashlib # 해시 변환용
 
 # --- 1. 초기 설정 ---
 st.set_page_config(
@@ -17,16 +18,12 @@ st.set_page_config(
 
 if 'n_cities' not in st.session_state: st.session_state.n_cities = 25
 if 'cities' not in st.session_state:
+    # 초기 실행 시에는 랜덤 생성
     coords = np.round(np.random.rand(st.session_state.n_cities, 2) * 100, 1)
     st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
-    # [수정] Simulated Annealing -> Metaheuristic
     st.session_state.paths = {k: [] for k in ["대학원생 최적화", "MILP Solver", "Nearest Neighbor", "k-opt", "Metaheuristic"]}
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
-    
-    # [추가] 메타휴리스틱 실행 옵션 저장용 (리더보드 표시용)
-    if 'meta_label' not in st.session_state:
-        st.session_state.meta_label = "Metaheuristic"
 
 # --- 2. 그래프 함수 (축 숨김) ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
@@ -124,14 +121,28 @@ with st.sidebar:
     st.header("🎮 맵 설정")
     num_cities = st.number_input("도시 개수 선택", min_value=5, max_value=100, value=st.session_state.n_cities)
     
+    # [수정] 랜덤 시드 입력 기능
+    seed_text = st.text_input("맵 시드 (Random Code)", placeholder="여기에 코드를 입력하면 맵이 고정됩니다.")
+    
     if st.button("도시 생성", use_container_width=True, type="primary"):
         st.session_state.n_cities = num_cities
+        
+        # [수정] 시드 처리 로직 (도시 위치에만 영향)
+        if seed_text:
+            # 문자열을 해시하여 정수 시드 생성
+            seed_val = int(hashlib.md5(seed_text.encode('utf-8')).hexdigest(), 16) % (2**32)
+            np.random.seed(seed_val)
+        
         coords = np.round(np.random.rand(num_cities, 2) * 100, 1)
+        
+        # [수정] 중요: 도시 생성 후 시드 초기화 (알고리즘 랜덤성 보장)
+        if seed_text:
+            np.random.seed(None)
+            
         st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
         st.session_state.paths = {k: [] for k in st.session_state.paths.keys()}
         st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
         st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
-        st.session_state.meta_label = "Metaheuristic" # 초기화
         st.rerun()
 
 # --- 5. 메인 화면 ---
@@ -162,13 +173,9 @@ for k, path in st.session_state.paths.items():
             diff = ((dist - best_dist) / best_dist) * 100
             gap_str = f"+{diff:.1f}%"
     
-    # [수정] Metaheuristic의 경우 상세 옵션을 이름에 표시
-    display_name = k
-    if k == "Metaheuristic":
-        display_name = st.session_state.meta_label
-    
+    # [수정] 리더보드에 그냥 원래 이름(Key)만 사용
     res_data.append({
-        "알고리즘": display_name, 
+        "알고리즘": k, 
         "거리": dist, 
         "시간(s)": f"{exec_time:.2f}",
         "GAP": gap_str, 
@@ -187,7 +194,7 @@ if res_data:
             "GAP": st.column_config.TextColumn("Gap"),
             "상태": st.column_config.TextColumn("완료")
         },
-        use_container_width=True
+        width="stretch"
     )
 else:
     st.info("실행된 알고리즘이 없습니다.")
@@ -223,8 +230,10 @@ with tabs[0]:
 # 2. MILP Solver (Optimal)
 with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
+    
     c1, c2 = st.columns([3, 1])
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="milp_time")
+    # [수정] 시간 제한 Max 20초, 기본 5초
+    timeout = c1.slider("실행 시간 제한 (초)", 1, 20, 5, key="milp_time")
     timer_spot = c1.empty()
     
     graph_spot = st.empty()
@@ -269,7 +278,8 @@ with tabs[3]:
     st.markdown("> **k-opt**: 경로의 일부를 끊고 재연결하여 거리를 줄이는 지역 탐색 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     k_v = c1.radio("방식 선택", ["2-opt", "3-opt"], horizontal=True)
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="kopt_time")
+    # [수정] 시간 제한 Max 20초, 기본 5초
+    timeout = c1.slider("실행 시간 제한 (초)", 1, 20, 5, key="kopt_time")
     timer_spot = c1.empty()
     
     graph_spot = st.empty()
@@ -289,40 +299,60 @@ with tabs[3]:
 
 # 5. Metaheuristic
 with tabs[4]:
-    st.markdown("> **Metaheuristic**: 초기 해 생성 전략과 지역 탐색(Local Search) 전략을 조합하여 최적해를 탐색합니다.")
-        
+    st.markdown("""
+    > **Metaheuristic**: 초기 해 생성 전략과 지역 탐색(Local Search) 전략을 조합하여 최적해를 탐색합니다.
+    > * **Neighbor Search Operators**: OR-Tools가 내부적으로 **Relocate, Exchange, Cross, 2-opt** 등의 연산자를 조합하여 이웃해를 탐색합니다.
+    """)
+    
+    with st.expander("ℹ️ 초기화 전략(Initialization) 상세 설명 보기"):
+        st.markdown("""
+        * **Automatic (Default)**: OR-Tools가 문제 크기에 맞춰 자동으로 최적의 전략을 선택합니다.
+        * **Greedy (Path Cheapest)**: 가장 비용이 적은 간선부터 탐욕적으로 연결합니다. 빠르지만 초기 해의 품질이 낮을 수 있습니다.
+        * **Savings (Clarke & Wright)**: 떨어져 있는 경로를 합쳤을 때 절약되는 거리가 큰 순서대로 병합합니다. 물류 최적화에서 자주 쓰입니다.
+        * **Sweep**: 각도(Angle)를 기준으로 도시를 쓸듯이 방문 순서를 정합니다.
+        * **Christofides**: 최소 신장 트리(MST)를 기반으로 오일러 회로를 구성합니다.
+        """)
+
     c1, c2 = st.columns([3, 1])
     
     with c1:
         c1_1, c1_2 = st.columns(2)
-        # [수정] Initialization 옵션
         init_strategy = c1_1.selectbox(
             "초기 해 생성 (Initialization)", 
             ["Automatic", "Greedy", "Savings", "Sweep", "Christofides"],
             index=0
         )
-        # [수정] Metaheuristic 옵션
         meta_strategy = c1_2.selectbox(
             "지역 탐색 (Metaheuristic)", 
             ["Automatic", "Greedy Descent", "Guided Local Search", "Simulated Annealing", "Tabu Search"],
             index=3
         )
-        timeout = st.slider("실행 시간 제한 (초)", 1, 60, 10, key="meta_time")
+        # [수정] 시간 제한 Max 20초, 기본 5초
+        timeout = st.slider("실행 시간 제한 (초)", 1, 20, 5, key="meta_time")
         timer_spot = st.empty()
+        
+        # SA일 때만 온도 옵션 표시
+        temp_arg = None
+        if meta_strategy == "Simulated Annealing":
+            init_temp = st.number_input(
+                "초기 온도 (Initial Temp)", 
+                min_value=0, 
+                value=0, 
+                help="0으로 설정하면 OR-Tools가 자동으로 결정합니다."
+            )
+            temp_arg = init_temp if init_temp > 0 else None
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="meta", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_metaheuristic, 
-            (st.session_state.cities, timeout, init_strategy, meta_strategy), 
+            (st.session_state.cities, timeout, init_strategy, meta_strategy, temp_arg), 
             graph_spot, "purple", timer_spot
         )
         if res:
             st.session_state.paths["Metaheuristic"] = res
             st.session_state.scores["Metaheuristic"] = algo.calculate_total_dist(res, st.session_state.cities)
             st.session_state.times["Metaheuristic"] = t
-            # [수정] 리더보드용 라벨 업데이트
-            st.session_state.meta_label = f"Metaheuristic ({init_strategy}, {meta_strategy})"
             st.rerun()
     else: 
         graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, st.session_state.paths["Metaheuristic"], "결과", "purple"), config=chart_config)
