@@ -22,7 +22,7 @@ if 'cities' not in st.session_state:
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
     st.session_state.times = {k: 0.0 for k in st.session_state.paths.keys()}
 
-# --- 2. 그래프 함수 (축 숨김) ---
+# --- 2. 그래프 함수 ---
 def draw_tsp_plot(cities_df, path, title, color="orange"):
     n_cities = len(cities_df)
     fig = go.Figure()
@@ -59,8 +59,8 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 스레드 실행 도우미 ---
-def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
+# --- 3. 스레드 실행 도우미 (타이머 기능 추가) ---
+def run_algorithm_in_background(target_func, args, graph_spot, chart_color, timer_spot=None):
     update_queue = queue.Queue()
     result_queue = queue.Queue()
     cities_copy = st.session_state.cities.copy()
@@ -83,8 +83,14 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
     update_idx = 0
     
     while t.is_alive():
+        # [추가] 실시간 타이머 업데이트
+        elapsed = time.time() - start_time
+        if timer_spot:
+            timer_spot.markdown(f"### ⏱️ 경과 시간: **{elapsed:.2f}s**")
+        
         try:
-            path, title = update_queue.get(timeout=0.01)
+            # 큐에서 데이터를 꺼내 그래프 업데이트
+            path, title = update_queue.get(timeout=0.05)
             update_idx += 1
             graph_spot.plotly_chart(
                 draw_tsp_plot(cities_copy, path, title, chart_color), 
@@ -98,6 +104,10 @@ def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
     t.join()
     end_time = time.time()
     
+    # 최종 시간 표시 고정
+    if timer_spot:
+        timer_spot.markdown(f"### ⏱️ 완료 시간: **{end_time - start_time:.2f}s**")
+
     if not result_queue.empty():
         return result_queue.get(), end_time - start_time
     return [], 0.0
@@ -202,14 +212,16 @@ with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
     
     c1, c2 = st.columns([3, 1])
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 30, key="milp_time")
+    # [수정] 기본 시간 10초
+    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="milp_time")
+    timer_spot = c1.empty() # 타이머 표시 위치
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_optimal_solver, 
             (st.session_state.cities, timeout), 
-            graph_spot, "gold"
+            graph_spot, "gold", timer_spot
         )
         st.session_state.paths["MILP Solver"] = res
         st.session_state.scores["MILP Solver"] = algo.calculate_total_dist(res, st.session_state.cities)
@@ -223,27 +235,15 @@ with tabs[2]:
     st.markdown("> **Nearest Neighbor**: 현재 위치에서 가장 가까운 도시를 찾아가는 탐욕 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     start_node = c1.selectbox("시작 도시", range(st.session_state.n_cities), format_func=lambda x: f"도시 {x+1}")
-    # [수정] NN 시간 제한 슬라이더 제거
+    timer_spot = c1.empty()
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="nn", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_nn, 
-            (st.session_state.n_cities, start_node, st.session_state.cities, cb), # cb는 run_algorithm_in_background에서 자동 처리
-            # [수정] 인자 목록에서 timeout 제거
-            graph_spot, "royalblue"
-        )
-        # 주의: run_algorithm_in_background는 내부적으로 콜백을 래핑함. 
-        # run_nn의 인자는 (n, start_node, cities_df, callback) 순서.
-        # run_algorithm_in_background(algo.run_nn, (args...), graph_spot, color)
-        
-        # 다시 올바르게 호출
-        res, t = run_algorithm_in_background(
-            algo.run_nn, 
             (st.session_state.n_cities, start_node, st.session_state.cities), 
-            graph_spot, "royalblue"
+            graph_spot, "royalblue", timer_spot
         )
-        
         st.session_state.paths["Nearest Neighbor"] = res
         st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
         st.session_state.times["Nearest Neighbor"] = t
@@ -256,14 +256,16 @@ with tabs[3]:
     st.markdown("> **k-opt**: 경로의 일부를 끊고 재연결하여 거리를 줄이는 지역 탐색 알고리즘입니다.")
     c1, c2 = st.columns([3, 1])
     k_v = c1.radio("방식 선택", ["2-opt", "3-opt"], horizontal=True)
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 30, key="kopt_time")
+    # [수정] 기본 시간 10초
+    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="kopt_time")
+    timer_spot = c1.empty()
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="kopt", type="primary", use_container_width=True):
         res, t = run_algorithm_in_background(
             algo.run_kopt, 
             (k_v, st.session_state.cities, timeout), 
-            graph_spot, "green"
+            graph_spot, "green", timer_spot
         )
         st.session_state.paths["k-opt"] = res
         st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities)
@@ -274,21 +276,36 @@ with tabs[3]:
 
 # 5. Simulated Annealing
 with tabs[4]:
-    # [수정] 초기화 방식과 휴리스틱 정보 표시
+    # [수정] 이웃해 탐색 방법(Neighborhood Search) 명시
     st.markdown("""
-    > **Simulated Annealing**: 확률적으로 나쁜 해를 수용하며 전역 최적해를 찾는 담금질 기법입니다.
-    > * **Initialization**: Automatic (Greedy)
-    > * **Metaheuristic**: Simulated Annealing
+    > **Simulated Annealing**: 확률적 메타휴리스틱으로, 초기 온도가 높을수록 나쁜 해를 더 잘 수용합니다.
+    > * **Neighbor Search Operators**: OR-Tools가 내부적으로 **Relocate, Exchange, Cross, 2-opt** 등의 연산자를 조합하여 이웃해를 탐색합니다.
     """)
+    
     c1, c2 = st.columns([3, 1])
-    timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 30, key="sa_time")
+    
+    # [수정] SA 상세 옵션 추가
+    with c1:
+        c1_1, c1_2 = st.columns(2)
+        init_strategy = c1_1.selectbox(
+            "초기 해 생성 (Initialization)", 
+            ["Automatic (Default)", "Greedy (Path Cheapest)", "Savings", "Christofides", "Random"],
+            index=0
+        )
+        init_temp = c1_2.number_input("초기 온도 (Initial Temp)", min_value=0, value=100, help="0이면 자동 설정")
+        # [수정] 기본 시간 10초
+        timeout = st.slider("실행 시간 제한 (초)", 1, 60, 10, key="sa_time")
+        timer_spot = st.empty()
     
     graph_spot = st.empty()
     if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
+        # 0이면 None으로 전달하여 OR-Tools 자동 설정 사용
+        temp_arg = init_temp if init_temp > 0 else None
+        
         res, t = run_algorithm_in_background(
             algo.run_sa, 
-            (st.session_state.cities, timeout), 
-            graph_spot, "purple"
+            (st.session_state.cities, timeout, init_strategy, temp_arg), 
+            graph_spot, "purple", timer_spot
         )
         st.session_state.paths["Simulated Annealing"] = res
         st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
