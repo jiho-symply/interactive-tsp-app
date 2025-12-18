@@ -64,7 +64,7 @@ def draw_graph(path, title, color="royalblue"):
         template="plotly_white",
         xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain"),
         yaxis=dict(showgrid=False, range=[-5, 105], scaleanchor="x", scaleratio=1),
-        height=600, showlegend=False, title=f"{title} (거리: {total_dist(path)})"
+        height=900, showlegend=False, title=f"{title} (거리: {total_dist(path)})"
     )
     return fig
 
