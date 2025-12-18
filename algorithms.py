@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import time
+from concorde.tsp import TSPSolver # pyconcorde 임포트
 
 def get_dist(p1, p2, cities_df):
     c1, c2 = cities_df.iloc[p1], cities_df.iloc[p2]
@@ -12,6 +13,23 @@ def calculate_total_dist(path, cities_df):
     d = sum(get_dist(path[i], path[i+1], cities_df) for i in range(len(path)-1))
     if len(path) == n: d += get_dist(path[-1], path[0], cities_df)
     return round(d, 1)
+
+# --- Concorde 알고리즘 추가 ---
+def run_concorde(cities_df, callback):
+    """수학적 최적해를 보장하는 Concorde Solver 실행"""
+    callback([], "Concorde Solver 가동 중...")
+    
+    # Concorde는 정수 좌표 환경에서 가장 안정적이므로 1000을 곱해 정밀도를 유지하며 정수화합니다.
+    solver = TSPSolver.from_data(
+        cities_df.x * 1000,
+        cities_df.y * 1000,
+        norm="EUC_2D"
+    )
+    
+    solution = solver.solve(msg=0) # msg=0: 로그 미출력
+    path = solution.tour.tolist()
+    
+    return path
 
 def run_nn(n_cities, start_node, cities_df, callback):
     path = [start_node]
