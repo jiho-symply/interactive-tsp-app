@@ -59,45 +59,59 @@ def draw_tsp_plot(cities_df, path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. [핵심] 스레드 실행 도우미 함수 ---
+# --- 3. [핵심] 스레드 실행 도우미 함수 (큐 방식) ---
 def run_algorithm_in_background(target_func, args, graph_spot, chart_color):
-    """알고리즘을 별도 스레드에서 실행하고 UI를 메인 스레드에서 업데이트합니다."""
-    
-    # 데이터 통신용 큐 생성
+    """
+    알고리즘을 별도 스레드에서 실행하고, 결과는 큐를 통해 메인 스레드로 전달합니다.
+    Streamlit 컨텍스트 오류와 ID 중복 오류를 모두 해결합니다.
+    """
     update_queue = queue.Queue()
     result_queue = queue.Queue()
-    
     cities_copy = st.session_state.cities.copy()
     
-    # 스레드에서 실행할 래퍼 함수
     def thread_target():
-        # 알고리즘 콜백: 진행 상황을 큐에 넣음
+        # 알고리즘이 호출할 콜백 (큐에 넣기만 함)
         def callback_wrapper(p, t):
             update_queue.put((p, t))
-            
-        # 실제 알고리즘 실행
-        res = target_func(*args, callback=callback_wrapper)
-        result_queue.put(res)
+        
+        # 알고리즘 실행
+        try:
+            res = target_func(*args, callback=callback_wrapper)
+            result_queue.put(res)
+        except Exception as e:
+            result_queue.put([]) # 에러 시 빈 리스트
+            print(f"Algorithm Error: {e}")
 
     # 스레드 시작
     t = threading.Thread(target=thread_target)
     t.start()
     
     start_time = time.time()
+    update_idx = 0
     
-    # 메인 스레드: 큐를 감시하며 UI 업데이트
+    # 메인 스레드: 큐 감시 및 UI 업데이트
     while t.is_alive():
         try:
-            # 큐에서 데이터 꺼내기 (비차단)
             path, title = update_queue.get(timeout=0.05)
-            graph_spot.plotly_chart(draw_tsp_plot(cities_copy, path, title, chart_color), use_container_width=True, config=chart_config)
+            update_idx += 1
+            # [해결] key에 update_idx를 포함하여 DuplicateElementId 방지
+            # use_container_width=True 유지 (경고는 무시 가능하거나 width='stretch' 사용 권장)
+            graph_spot.plotly_chart(
+                draw_tsp_plot(cities_copy, path, title, chart_color), 
+                use_container_width=True, 
+                config=chart_config,
+                key=f"live_{chart_color}_{update_idx}"
+            )
         except queue.Empty:
             pass
             
-    t.join() # 스레드 종료 대기
-    
+    t.join()
     end_time = time.time()
-    return result_queue.get(), end_time - start_time
+    
+    # 최종 결과 반환
+    if not result_queue.empty():
+        return result_queue.get(), end_time - start_time
+    return [], 0.0
 
 # --- 4. 사이드바 ---
 with st.sidebar:
