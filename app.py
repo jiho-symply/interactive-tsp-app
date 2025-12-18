@@ -223,7 +223,7 @@ with tabs[0]:
 # 2. MILP Solver (Optimal)
 with tabs[1]:
     st.markdown("> **MILP Solver**: 수학적 모델링(CP-SAT)을 통해 증명된 전역 최적해(Global Optimum)를 도출합니다.")
-        c1, c2 = st.columns([3, 1])
+    c1, c2 = st.columns([3, 1])
     timeout = c1.slider("실행 시간 제한 (초)", 1, 60, 10, key="milp_time")
     timer_spot = c1.empty()
     
