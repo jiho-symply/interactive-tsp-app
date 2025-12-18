@@ -2,4 +2,5 @@ streamlit
 pandas
 numpy
 plotly
-git+https://github.com/jm-cardoso/pyconcorde.git
+cython
+git+https://github.com/jm-cardoso/pyconcorde.git@master
