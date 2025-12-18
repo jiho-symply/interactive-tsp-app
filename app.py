@@ -15,20 +15,6 @@ if 'cities' not in st.session_state:
     st.session_state.paths = {k: [] for k in ["대학원생 최적화", "Nearest Neighbor", "k-opt", "Simulated Annealing", "최적해 (Optimal)"]}
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
 
-@st.dialog("새 도시 배치")
-def reset_cities_dialog():
-    st.write("도시 개수(5~50)를 선택하세요.")
-    num = st.number_input("도시 개수", 5, 50, st.session_state.n_cities)
-    c1, c2 = st.columns(2)
-    if c1.button("취소", use_container_width=True): st.rerun()
-    if c2.button("배치 생성", use_container_width=True, type="primary"):
-        st.session_state.n_cities = num
-        coords = np.round(np.random.rand(num, 2) * 100, 1)
-        st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
-        st.session_state.paths = {k: [] for k in st.session_state.paths.keys()}
-        st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
-        st.rerun()
-
 # --- 2. 그래프 렌더링 함수 ---
 def draw_tsp_plot(path, title, color="orange"):
     fig = go.Figure()
@@ -54,7 +40,7 @@ def draw_tsp_plot(path, title, color="orange"):
         template="plotly_white",
         xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain", fixedrange=True),
         yaxis=dict(showgrid=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
-        height=750, # 메인 화면 공간 확보를 위해 높이 약간 조절
+        height=750,
         showlegend=False,
         dragmode=False,
         title=f"{title} (거리: {algo.calculate_total_dist(path, st.session_state.cities)})"
@@ -63,35 +49,45 @@ def draw_tsp_plot(path, title, color="orange"):
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 사이드바 (결과 비교 및 설정) ---
+# --- 3. 사이드바 (설정 및 결과 비교) ---
 with st.sidebar:
     st.header("🎮 컨트롤 패널")
-    if st.button("🗺️ 새 도시 배치", use_container_width=True):
-        reset_cities_dialog()
+    
+    # [수정] 도시 배치 기능을 사이드바로 이동
+    st.subheader("맵 설정")
+    num_cities = st.number_input("도시 개수 선택", min_value=5, max_value=50, value=st.session_state.n_cities)
+    
+    if st.button("도시 생성", use_container_width=True, type="primary"):
+        st.session_state.n_cities = num_cities
+        coords = np.round(np.random.rand(num_cities, 2) * 100, 1)
+        st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
+        # 모든 경로 및 점수 초기화
+        st.session_state.paths = {k: [] for k in st.session_state.paths.keys()}
+        st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
+        st.rerun()
     
     st.divider()
+    
+    # 결과 비교 (Leaderboard)
     st.subheader("📊 결과 비교 (Leaderboard)")
     
-    # 데이터 가공 로직
     res_data = []
     best_dist = float('inf')
     
-    # 1차 순회: '완료된' 경로 중 최단 거리 찾기
+    # 1차 순회: 최적값 탐색
     for k, path in st.session_state.paths.items():
         if path and len(path) == st.session_state.n_cities:
             d = st.session_state.scores[k]
             if d < best_dist: best_dist = d
             
-    # 2차 순회: 테이블 데이터 생성
+    # 2차 순회: 데이터 생성
     for k, path in st.session_state.paths.items():
         dist = st.session_state.scores[k]
-        if dist == 0: continue # 실행 안 함
+        if dist == 0: continue
         
-        # 상태 확인
         is_complete = len(path) == st.session_state.n_cities
         status_icon = "✅" if is_complete else "🚧"
         
-        # GAP 계산
         gap_str = "-"
         if is_complete and best_dist != float('inf'):
             if dist == best_dist:
@@ -108,20 +104,17 @@ with st.sidebar:
         })
     
     if res_data:
-        # 거리 기준 오름차순 정렬
         df = pd.DataFrame(res_data).sort_values(by="거리").reset_index(drop=True)
         df.index += 1
-        # 보기 좋게 출력
         st.dataframe(
             df, 
             column_config={
                 "알고리즘": st.column_config.TextColumn("알고리즘", width="medium"),
                 "거리": st.column_config.NumberColumn("거리", format="%.1f"),
-                "GAP": st.column_config.TextColumn("Gap", help="1위와의 거리 차이(%)"),
+                "GAP": st.column_config.TextColumn("Gap", help="1위와의 거리 차이"),
                 "상태": st.column_config.TextColumn("완료", help="모든 도시 방문 여부")
             },
-            use_container_width=True,
-            hide_index=False
+            use_container_width=True
         )
     else:
         st.info("실행된 알고리즘이 없습니다.")
@@ -133,18 +126,25 @@ tabs = st.tabs(["✍️ 대학원생 최적화", "📍 Nearest Neighbor", "🔧 
 
 # 1. 대학원생 최적화
 with tabs[0]:
+    # [수정] 요청하신 문구로 복구
     st.info("💡 대학원생의 직관은 때론 휴리스틱보다 강력합니다. 점을 순서대로 클릭하여 경로를 설계하세요.")
+    
     c1, c2 = st.columns([3, 1])
     if c2.button("🧹 경로 초기화", use_container_width=True):
-        st.session_state.paths["대학원생 최적화"] = []; st.session_state.scores["대학원생 최적화"] = 0.0; st.rerun()
+        st.session_state.paths["대학원생 최적화"] = []
+        st.session_state.scores["대학원생 최적화"] = 0.0
+        st.rerun()
+        
     graph_spot = st.empty()
     selected = graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["대학원생 최적화"], "대학원생 최적화", "orange"), on_select="rerun", use_container_width=True, config=chart_config)
+    
     if selected and "selection" in selected and selected["selection"]["point_indices"]:
         idx = selected["selection"]["point_indices"][0]
         p = st.session_state.paths["대학원생 최적화"]
         if idx in p: p.remove(idx)
         else: p.append(idx)
-        st.session_state.scores["대학원생 최적화"] = algo.calculate_total_dist(p, st.session_state.cities); st.rerun()
+        st.session_state.scores["대학원생 최적화"] = algo.calculate_total_dist(p, st.session_state.cities)
+        st.rerun()
 
 # 2. Nearest Neighbor
 with tabs[1]:
