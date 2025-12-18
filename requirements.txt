@@ -2,5 +2,4 @@ streamlit
 pandas
 numpy
 plotly
-cython
-pyconcorde @ git+https://github.com/jvkersch/pyconcorde
+ortools
