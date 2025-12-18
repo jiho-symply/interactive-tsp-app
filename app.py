@@ -5,15 +5,15 @@ import plotly.graph_objects as go
 import algorithms as algo
 import time
 
-# --- 1. 초기 설정 및 세션 관리 ---
+# --- 초기 설정 ---
 st.set_page_config(page_title="TSP 시뮬레이터", layout="wide")
-st.title("🏙️ TSP 시뮬레이터 (C++ Engine Edition)")
+st.title("🏙️ TSP 시뮬레이터")
 
 if 'n_cities' not in st.session_state: st.session_state.n_cities = 25
 if 'cities' not in st.session_state:
     coords = np.round(np.random.rand(st.session_state.n_cities, 2) * 100, 1)
     st.session_state.cities = pd.DataFrame(coords, columns=['x', 'y'])
-    st.session_state.paths = {k: [] for k in ["대학원생 최적화", "Nearest Neighbor", "k-opt", "Simulated Annealing", "Advanced (GLS)"]}
+    st.session_state.paths = {k: [] for k in ["대학원생 최적화", "Nearest Neighbor", "k-opt", "Simulated Annealing", "최적해 (Optimal)"]}
     st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
 
 @st.dialog("새 도시 배치")
@@ -30,43 +30,29 @@ def reset_cities_dialog():
         st.session_state.scores = {k: 0.0 for k in st.session_state.paths.keys()}
         st.rerun()
 
-# --- 2. 그래프 렌더링 함수 (Interaction 고정) ---
 def draw_tsp_plot(path, title, color="orange"):
     fig = go.Figure()
-    # 도시 포인트 (1부터 시작하는 라벨)
     fig.add_trace(go.Scatter(
         x=st.session_state.cities.x, y=st.session_state.cities.y,
-        mode='markers+text', 
-        text=[f"C{i+1}" for i in range(st.session_state.n_cities)],
-        textposition="top center", 
-        marker=dict(size=10, color='black'), 
-        name="도시"
+        mode='markers+text', text=[f"C{i+1}" for i in range(st.session_state.n_cities)],
+        textposition="top center", marker=dict(size=10, color='black'), name="도시"
     ))
-    # 경로 선
     if path and len(path) > 0:
         d_path = path + [path[0]] if len(path) == st.session_state.n_cities else path
         coords = st.session_state.cities.iloc[d_path]
-        fig.add_trace(go.Scatter(
-            x=coords.x, y=coords.y, 
-            mode='lines+markers', 
-            line=dict(color=color, width=3),
-            hoverinfo="skip"
-        ))
+        fig.add_trace(go.Scatter(x=coords.x, y=coords.y, mode='lines+markers', line=dict(color=color, width=3), hoverinfo="skip"))
     
     fig.update_layout(
-        template="plotly_white",
-        xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain", fixedrange=True),
+        template="plotly_white", xaxis=dict(showgrid=False, range=[-5, 105], constrain="domain", fixedrange=True),
         yaxis=dict(showgrid=False, range=[-5, 105], scaleanchor="x", scaleratio=1, fixedrange=True),
-        height=900,
-        showlegend=False,
-        dragmode=False,
+        height=900, showlegend=False, dragmode=False,
         title=f"{title} (거리: {algo.calculate_total_dist(path, st.session_state.cities)})"
     )
     return fig
 
 chart_config = {'displayModeBar': False, 'scrollZoom': False}
 
-# --- 3. 메인 레이아웃 ---
+# --- 메인 레이아웃 ---
 col_main, col_side = st.columns([3, 1])
 
 with col_side:
@@ -81,16 +67,14 @@ with col_side:
     if st.button("🗺️ 새 도시 배치", use_container_width=True): reset_cities_dialog()
 
 with col_main:
-    tabs = st.tabs(["✍️ 대학원생 최적화", "📍 Nearest Neighbor", "🔧 k-opt", "🔥 Simulated Annealing", "🚀 Advanced (GLS)"])
+    tabs = st.tabs(["✍️ 대학원생 최적화", "📍 Nearest Neighbor", "🔧 k-opt", "🔥 Simulated Annealing", "🏆 최적해 (Optimal)"])
 
-    # --- 탭 1: 대학원생 최적화 (수동) ---
+    # 1. 대학원생 최적화
     with tabs[0]:
-        st.info("💡 대학원생의 직관 모드: 점을 순서대로 클릭하세요. 다시 누르면 취소됩니다.")
+        st.info("💡 점을 순서대로 클릭하여 직접 경로를 만드세요.")
         c1, c2 = st.columns([3, 1])
         if c2.button("🧹 경로 초기화", use_container_width=True):
-            st.session_state.paths["대학원생 최적화"] = []
-            st.session_state.scores["대학원생 최적화"] = 0.0
-            st.rerun()
+            st.session_state.paths["대학원생 최적화"] = []; st.session_state.scores["대학원생 최적화"] = 0.0; st.rerun()
         graph_spot = st.empty()
         selected = graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["대학원생 최적화"], "대학원생 최적화", "orange"), on_select="rerun", use_container_width=True, config=chart_config)
         if selected and "selection" in selected and selected["selection"]["point_indices"]:
@@ -98,59 +82,50 @@ with col_main:
             p = st.session_state.paths["대학원생 최적화"]
             if idx in p: p.remove(idx)
             else: p.append(idx)
-            st.session_state.scores["대학원생 최적화"] = algo.calculate_total_dist(p, st.session_state.cities)
-            st.rerun()
+            st.session_state.scores["대학원생 최적화"] = algo.calculate_total_dist(p, st.session_state.cities); st.rerun()
 
-    # --- 탭 2: Nearest Neighbor (OR-Tools 기반) ---
+    # 2. Nearest Neighbor
     with tabs[1]:
-        st.markdown("> **C++ 기반 Nearest Neighbor**: OR-Tools의 Path Cheapest Arc 전략을 사용합니다.")
+        st.markdown("> **Nearest Neighbor**: 현재 위치에서 가장 가까운 도시를 찾아가는 탐욕 알고리즘입니다.")
         c1, c2 = st.columns([3, 1])
-        start_node = c1.selectbox("시작 도시 선택", range(st.session_state.n_cities), format_func=lambda x: f"도시 {x+1}")
+        start_node = c1.selectbox("시작 도시", range(st.session_state.n_cities), format_func=lambda x: f"도시 {x+1}")
         graph_spot = st.empty()
-        if c2.button("알고리즘 실행", key="nn_run", type="primary", use_container_width=True):
+        if c2.button("알고리즘 실행", key="nn", type="primary", use_container_width=True):
             def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(p, t, "royalblue"), use_container_width=True, config=chart_config)
-            res = algo.run_nn_engine(st.session_state.n_cities, start_node, st.session_state.cities, cb)
-            st.session_state.paths["Nearest Neighbor"] = res
-            st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities)
-            st.rerun()
+            res = algo.run_nn(st.session_state.n_cities, start_node, st.session_state.cities, cb)
+            st.session_state.paths["Nearest Neighbor"] = res; st.session_state.scores["Nearest Neighbor"] = algo.calculate_total_dist(res, st.session_state.cities); st.rerun()
         else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["Nearest Neighbor"], "NN 결과", "royalblue"), use_container_width=True, config=chart_config)
 
-    # --- 탭 3: k-opt (C++ Local Search) ---
+    # 3. k-opt
     with tabs[2]:
-        st.markdown("> **C++ 기반 k-opt**: OR-Tools 내장 Local Search 연산자가 개선이 없을 때까지 수행합니다.")
+        st.markdown("> **k-opt**: 경로의 일부를 끊고 재연결하여 거리를 줄이는 지역 탐색 알고리즘입니다.")
         c1, c2 = st.columns([3, 1])
-        k_v = c1.radio("알고리즘 선택", ["2-opt", "3-opt"], horizontal=True)
+        k_v = c1.radio("방식 선택", ["2-opt", "3-opt"], horizontal=True)
         graph_spot = st.empty()
-        if c2.button("알고리즘 실행", key="kopt_run", type="primary", use_container_width=True):
+        if c2.button("알고리즘 실행", key="kopt", type="primary", use_container_width=True):
             def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(p, t, "green"), use_container_width=True, config=chart_config)
-            res = algo.run_kopt_engine(k_v, st.session_state.cities, cb)
-            st.session_state.paths["k-opt"] = res
-            st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities)
-            st.rerun()
+            res = algo.run_kopt(k_v, st.session_state.cities, cb)
+            st.session_state.paths["k-opt"] = res; st.session_state.scores["k-opt"] = algo.calculate_total_dist(res, st.session_state.cities); st.rerun()
         else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["k-opt"], "k-opt 결과", "green"), use_container_width=True, config=chart_config)
 
-    # --- 탭 4: Simulated Annealing (C++ Metaheuristic) ---
+    # 4. Simulated Annealing
     with tabs[3]:
-        st.markdown("> **C++ 기반 SA**: OR-Tools의 Simulated Annealing 메타휴리스틱 엔진을 사용합니다.")
+        st.markdown("> **Simulated Annealing**: 확률적으로 나쁜 해를 수용하며 전역 최적해를 찾는 담금질 기법입니다.")
         c1, c2 = st.columns([3, 1])
         graph_spot = st.empty()
-        if c2.button("알고리즘 실행", key="sa_run", type="primary", use_container_width=True):
+        if c2.button("알고리즘 실행", key="sa", type="primary", use_container_width=True):
             def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(p, t, "purple"), use_container_width=True, config=chart_config)
-            res = algo.run_sa_engine(st.session_state.cities, cb)
-            st.session_state.paths["Simulated Annealing"] = res
-            st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities)
-            st.rerun()
+            res = algo.run_sa(st.session_state.cities, cb)
+            st.session_state.paths["Simulated Annealing"] = res; st.session_state.scores["Simulated Annealing"] = algo.calculate_total_dist(res, st.session_state.cities); st.rerun()
         else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["Simulated Annealing"], "SA 결과", "purple"), use_container_width=True, config=chart_config)
 
-    # --- 탭 5: Advanced (Guided Local Search) ---
+    # 5. 최적해 (Optimal)
     with tabs[4]:
-        st.markdown("> **Advanced Optimal**: OR-Tools의 가장 강력한 전략인 Guided Local Search를 수행합니다.")
+        st.markdown("> **최적해 (Optimal)**: 수학적 증명을 통해 가능한 가장 짧은 경로를 찾아냅니다.")
         c1, c2 = st.columns([3, 1])
         graph_spot = st.empty()
-        if c2.button("알고리즘 실행", key="adv_run", type="primary", use_container_width=True):
+        if c2.button("알고리즘 실행", key="opt", type="primary", use_container_width=True):
             def cb(p, t): graph_spot.plotly_chart(draw_tsp_plot(p, t, "gold"), use_container_width=True, config=chart_config)
-            res = algo.run_advanced_engine(st.session_state.cities, cb)
-            st.session_state.paths["Advanced (GLS)"] = res
-            st.session_state.scores["Advanced (GLS)"] = algo.calculate_total_dist(res, st.session_state.cities)
-            st.rerun()
-        else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["Advanced (GLS)"], "GLS 결과", "gold"), use_container_width=True, config=chart_config)
+            res = algo.run_optimal_solver(st.session_state.cities, cb)
+            st.session_state.paths["최적해 (Optimal)"] = res; st.session_state.scores["최적해 (Optimal)"] = algo.calculate_total_dist(res, st.session_state.cities); st.rerun()
+        else: graph_spot.plotly_chart(draw_tsp_plot(st.session_state.paths["최적해 (Optimal)"], "최적해 결과", "gold"), use_container_width=True, config=chart_config)
