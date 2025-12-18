@@ -1,5 +1,5 @@
 import numpy as np
-import math
+import time
 from ortools.constraint_solver import routing_enums_pb2
 from ortools.constraint_solver import pywrapcp
 from ortools.sat.python import cp_model
@@ -19,23 +19,30 @@ def calculate_total_dist(path, cities_df):
     d += np.sqrt((c1.x - c2.x)**2 + (c1.y - c2.y)**2)
     return round(d, 1)
 
-# --- 1. Nearest Neighbor (Python 구현) ---
+# --- 1. Nearest Neighbor ---
 def run_nn(n, start_node, cities_df, callback):
-    # NN은 단계별 시각화가 중요하므로 Python으로 직접 제어
     path = [start_node]
     unvisited = set(range(n)) - {start_node}
     
     while unvisited:
         last = path[-1]
-        next_node = min(unvisited, key=lambda x: (cities_df.iloc[last].x - cities_df.iloc[x].x)**2 + (cities_df.iloc[last].y - cities_df.iloc[x].y)**2)
+        # 거리 계산 (NumPy 활용 최적화)
+        curr_coords = cities_df.iloc[last][['x', 'y']].values
+        candidates = list(unvisited)
+        cand_coords = cities_df.iloc[candidates][['x', 'y']].values
+        dists = np.sum((cand_coords - curr_coords)**2, axis=1)
+        next_node = candidates[np.argmin(dists)]
+        
         path.append(next_node)
         unvisited.remove(next_node)
-        # 애니메이션 콜백
+        
+        # [수정] 0.5초 딜레이
         callback(path, f"탐욕적 탐색 중... (방문 {len(path)}/{n})")
+        time.sleep(0.5)
     
     return path
 
-# --- 2. OR-Tools Routing Engine (k-opt, SA용) ---
+# --- 2. OR-Tools Routing Engine (k-opt, SA) ---
 def run_routing_engine(cities_df, strategy, metaheuristic, timeout_ms, algorithm_name, callback):
     n = len(cities_df)
     manager = pywrapcp.RoutingIndexManager(n, 1, 0)
@@ -52,7 +59,7 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout_ms, algorithm
     search_parameters.local_search_metaheuristic = metaheuristic
     search_parameters.time_limit.seconds = timeout_ms // 1000
 
-    # [중요] 중간 해(Intermediate Solution) 시각화를 위한 콜백
+    # 중간 해 시각화 콜백
     def solution_callback():
         path = []
         index = routing.Start(0)
@@ -61,6 +68,8 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout_ms, algorithm
             index = routing.NextVar(index).Value()
         
         callback(path, f"{algorithm_name} 진행 중...")
+        # [수정] 0.5초 딜레이 (C++ 엔진 콜백 내에서 동작)
+        time.sleep(0.5)
 
     routing.AddAtSolutionCallback(solution_callback)
     
@@ -76,18 +85,16 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout_ms, algorithm
     return list(range(n))
 
 def run_kopt(k_val, cities_df, callback):
-    # k-opt: Greedy Descent로 지역 최적해 탐색
     strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
     meta = routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
-    return run_routing_engine(cities_df, strategy, meta, 3000, k_val, callback)
+    return run_routing_engine(cities_df, strategy, meta, 5000, k_val, callback)
 
 def run_sa(cities_df, callback):
-    # SA: Simulated Annealing
     strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
     meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
-    return run_routing_engine(cities_df, strategy, meta, 5000, "Simulated Annealing", callback)
+    return run_routing_engine(cities_df, strategy, meta, 10000, "Simulated Annealing", callback)
 
-# --- 3. OR-Tools CP-SAT (최적해용) ---
+# --- 3. CP-SAT Solver (MILP 최적해) ---
 class ObjCallback(cp_model.CpSolverSolutionCallback):
     def __init__(self, arcs, n, callback):
         cp_model.CpSolverSolutionCallback.__init__(self)
@@ -96,22 +103,27 @@ class ObjCallback(cp_model.CpSolverSolutionCallback):
         self.callback = callback
 
     def OnSolutionCallback(self):
-        # 현재 해에서 경로 복원
         next_node = {}
         for i, j, lit in self.arcs:
             if self.Value(lit):
                 next_node[i] = j
         
+        # 부분 경로라도 시각화 시도
         path = [0]
         curr = 0
+        visited = {0}
         while len(path) < self.n:
             if curr in next_node:
                 curr = next_node[curr]
+                if curr in visited: break 
+                visited.add(curr)
                 path.append(curr)
             else:
                 break
         
-        self.callback(path, "전역 최적해 탐색 중...")
+        self.callback(path, "MILP 최적해 탐색 중...")
+        # [수정] 0.5초 딜레이
+        time.sleep(0.5)
 
 def run_optimal_solver(cities_df, callback):
     n = len(cities_df)
@@ -124,11 +136,15 @@ def run_optimal_solver(cities_df, callback):
             if i != j:
                 arcs.append((i, j, model.NewBoolVar(f'e_{i}_{j}')))
 
+    # Circuit constraint
     model.AddCircuit([(i, j, lit) for (i, j, lit) in arcs])
+    # Minize distance
     model.Minimize(sum(dist_matrix[i][j] * lit for (i, j, lit) in arcs))
 
     solver = cp_model.CpSolver()
-    # 중간 해 시각화 콜백 등록
+    # Solver 파라미터 튜닝 (빠른 반응을 위해)
+    solver.parameters.max_time_in_seconds = 30.0
+    
     solution_callback = ObjCallback(arcs, n, callback)
     status = solver.Solve(model, solution_callback)
 
