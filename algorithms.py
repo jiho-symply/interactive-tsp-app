@@ -19,15 +19,12 @@ def calculate_total_dist(path, cities_df):
     d += np.sqrt((c1.x - c2.x)**2 + (c1.y - c2.y)**2)
     return round(d, 1)
 
-# --- 1. Nearest Neighbor ---
-def run_nn(n, start_node, cities_df, timeout, callback):
+# --- 1. Nearest Neighbor (시간 제한 제거) ---
+def run_nn(n, start_node, cities_df, callback):
     path = [start_node]
     unvisited = set(range(n)) - {start_node}
-    start_time = time.time()
     
     while unvisited:
-        if time.time() - start_time > timeout: break
-        
         last = path[-1]
         curr_coords = cities_df.iloc[last][['x', 'y']].values
         candidates = list(unvisited)
@@ -39,7 +36,7 @@ def run_nn(n, start_node, cities_df, timeout, callback):
         unvisited.remove(next_node)
         
         callback(path, f"탐욕적 탐색 중... ({len(path)}/{n})")
-        # [삭제] time.sleep 제거
+        # NN은 별도 딜레이 없이 최대한 빠르게 수행 (필요시 time.sleep(0.1) 추가 가능)
     
     return path
 
@@ -67,7 +64,6 @@ def run_routing_engine(cities_df, strategy, metaheuristic, timeout, algorithm_na
             path.append(manager.IndexToNode(index))
             index = routing.NextVar(index).Value()
         callback(path, f"{algorithm_name} 진행 중...")
-        # [삭제] time.sleep 제거
 
     routing.AddAtSolutionCallback(solution_callback)
     
@@ -88,6 +84,7 @@ def run_kopt(k_val, cities_df, timeout, callback):
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
 def run_sa(cities_df, timeout, callback):
+    # SA 설정: 초기해는 AUTOMATIC(보통 Cheapest Arc), 메타휴리스틱은 SIMULATED_ANNEALING
     strategy = routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
     meta = routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING
     return run_routing_engine(cities_df, strategy, meta, timeout, "Simulated Annealing", callback)
@@ -119,7 +116,6 @@ class ObjCallback(cp_model.CpSolverSolutionCallback):
                 break
         
         self.callback(path, "MILP 최적해 탐색 중...")
-        # [삭제] time.sleep 제거
 
 def run_optimal_solver(cities_df, timeout, callback):
     n = len(cities_df)
