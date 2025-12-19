@@ -79,7 +79,7 @@ def run_kopt(k_val, cities_df, timeout, callback):
     meta = routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
     return run_routing_engine(cities_df, strategy, meta, timeout, k_val, callback)
 
-def run_metaheuristic(cities_df, timeout, init_strategy_name, meta_strategy_name, callback, initial_temp=None):
+def run_metaheuristic(cities_df, timeout, init_strategy_name, meta_strategy_name, initial_temp, callback):
     init_strategies = {
         "Automatic": routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC,
         "Greedy": routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC,
@@ -94,9 +94,25 @@ def run_metaheuristic(cities_df, timeout, init_strategy_name, meta_strategy_name
         "Simulated Annealing": routing_enums_pb2.LocalSearchMetaheuristic.SIMULATED_ANNEALING,
         "Tabu Search": routing_enums_pb2.LocalSearchMetaheuristic.TABU_SEARCH
     }
-    strategy = init_strategies.get(init_strategy_name, routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC)
-    meta = meta_strategies.get(meta_strategy_name, routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC)
-    return run_routing_engine(cities_df, strategy, meta, timeout, meta_strategy_name, callback, initial_temp)
+
+    strategy = init_strategies.get(
+        init_strategy_name,
+        routing_enums_pb2.FirstSolutionStrategy.AUTOMATIC
+    )
+    meta = meta_strategies.get(
+        meta_strategy_name,
+        routing_enums_pb2.LocalSearchMetaheuristic.AUTOMATIC
+    )
+
+    return run_routing_engine(
+        cities_df,
+        strategy,
+        meta,
+        timeout,
+        meta_strategy_name,   # algorithm_name
+        callback,
+        initial_temp          # simulated annealing 초기 온도 (또는 None)
+    )
 
 # --- 3. MILP Solver ---
 class ObjCallback(cp_model.CpSolverSolutionCallback):
