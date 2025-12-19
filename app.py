@@ -251,7 +251,6 @@ with tabs[5]:
     st.markdown("""
     > **Neural Network (Pointer Network)**  
     > 미리 학습된 Pointer Network(PyTorch, `models/pointer_network.pt`)를 사용하여 TSP 경로를 추론합니다.  
-    > 입력 좌표는 0~100 범위에서 0~1로 정규화되어 모델에 전달됩니다.
     """)
 
     c1, c2 = st.columns([3, 1])
