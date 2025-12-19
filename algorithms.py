@@ -149,26 +149,29 @@ def run_optimal_solver(cities_df, timeout, callback):
         elif status == cp_model.UNKNOWN: raise RuntimeError("Timeout / Unknown")
     return []
 
-# --- 4. [NEW] Neural Solver Wrapper ---
-def run_neural(model_source, cities_df, callback):
-    """
-    Args:
-        model_source: 파일 경로(str) 또는 업로드된 파일(bytes)
-    """
-    solver = neural_solver.NeuralTSPSolver(model_source)
-    
-    # 더미 세션(파일 없음)인 경우, 시각적으로만 보여주기 위해 딜레이 추가
-    if solver.session is None:
-        # 더미 모션
-        n = len(cities_df)
-        path = list(range(n))
-        callback(path, "가상의 Neural Net 추론 중... (Model Not Found)")
-        return path
+# --- 4. [NEW] Neural Solver Wrapper (Pointer Network) ---
 
-    # 실제 추론
-    path = solver.solve(cities_df)
-    
-    # Neural Net은 결과가 한 번에 나오므로 콜백으로 한 번 그려줌
-    callback(path, "Neural Network 추론 완료")
-    
+def run_neural(cities_df, callback):
+    """
+    미리 학습된 Pointer Network (models/pointer_network.pt)를 이용한 TSP 추론.
+    Streamlit의 run_algorithm_in_background에서 호출됨.
+    """
+    try:
+        solver = neural_solver.NeuralTSPSolver(
+            model_path="models/pointer_network.pt",
+            device="cpu",
+        )
+    except RuntimeError as e:
+        # 모델이 없거나 로드 실패 시: 사용자에게 에러 표시용
+        n = len(cities_df)
+        fallback_path = list(range(n))
+        callback(fallback_path, f"Neural Pointer Network 로드 실패: {e}")
+        return fallback_path
+
+    # 실제 추론 (multi-start 내부에서 수행)
+    path = solver.solve(cities_df, num_starts=16)
+
+    # Neural Net은 결과가 한 번에 나오므로 콜백으로 한 번만 업데이트
+    callback(path, "Neural Pointer Network 추론 완료")
+
     return path

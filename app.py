@@ -249,72 +249,56 @@ with tabs[4]:
 # 6. Neural Network
 with tabs[5]:
     st.markdown("""
-    > **Neural Network**: 딥러닝 모델(ONNX)을 사용하여 TSP 경로를 추론합니다. 
-    > * 미리 학습된 모델을 선택하거나, 직접 학습시킨 `.onnx` 파일을 업로드하여 사용할 수 있습니다.
-    > * 모델은 입력으로 `(1, N, 2)` 형태의 0~1 정규화된 좌표를 받고, 출력으로 방문 순서 인덱스를 반환해야 합니다.
+    > **Neural Network (Pointer Network)**  
+    > 미리 학습된 Pointer Network(PyTorch, `models/pointer_network.pt`)를 사용하여 TSP 경로를 추론합니다.  
+    > 입력 좌표는 0~100 범위에서 0~1로 정규화되어 모델에 전달됩니다.
     """)
-    
-    
+
     c1, c2 = st.columns([3, 1])
-    
+
     with c1:
-        # 모델 소스 선택
-        model_source_type = st.radio("모델 선택", ["Pre-trained Model", "Upload Custom Model"], horizontal=True)
-        
-        final_model_source = None
-        model_name_for_key = "Neural Model"
-        
-        if model_source_type == "Pre-trained Model":
-            # 프리셋 모델 목록 (실제 파일이 없어도 목록은 보여줌 -> 없으면 더미 동작)
-            preset_name = st.selectbox("모델 목록", [
-                "Pointer Network", 
-                "Transformer (AM)", 
-                "POMO", 
-                "Difusco"
-            ])
-            # 실제 경로 매핑 (models 폴더 내)
-            model_filename_map = {
-                "Pointer Network": "models/pointer_net.onnx",
-                "Transformer (AM)": "models/attention_model.onnx",
-                "POMO": "models/pomo.onnx",
-                "Difusco": "models/difusco.onnx"
-            }
-            final_model_source = model_filename_map[preset_name]
-            model_name_for_key = f"Neural: {preset_name}"
-            
-        else:
-            # 파일 업로드
-            uploaded_file = st.file_uploader("ONNX 모델 업로드", type=["onnx"])
-            if uploaded_file is not None:
-                # 업로드된 파일의 bytes를 직접 전달
-                final_model_source = uploaded_file.read()
-                model_name_for_key = f"Neural: {uploaded_file.name}"
-    
+        st.markdown("### 사용 모델: **Pre-trained Pointer Network**")
         timer_spot = st.empty()
 
     graph_spot = st.empty()
-    
-    # 해당 모델의 결과가 이미 있으면 그래프 표시
+
+    # 리더보드에서 구분하기 위한 고정 키
+    model_name_for_key = "Neural: Pointer Network"
+
+    # 해당 모델의 기존 결과가 있으면 불러오기
     current_path = st.session_state.paths.get(model_name_for_key, [])
-    
+
     if c2.button("알고리즘 실행", key="neural_btn", type="primary", use_container_width=True):
-        if final_model_source:
-            res, t = run_algorithm_in_background(
-                algo.run_neural,
-                (final_model_source, st.session_state.cities),
-                graph_spot, "magenta", timer_spot
-            )
-            if res:
-                # [중요] 동적으로 키 추가 (리더보드 분리)
-                st.session_state.paths[model_name_for_key] = res
-                st.session_state.scores[model_name_for_key] = algo.calculate_total_dist(res, st.session_state.cities)
-                st.session_state.times[model_name_for_key] = t
-                st.rerun()
-        else:
-            st.warning("모델을 선택하거나 업로드해주세요.")
+        # run_algorithm_in_background는 target_func(*args, callback=...) 형태로 호출함
+        res, t = run_algorithm_in_background(
+            algo.run_neural,
+            (st.session_state.cities,),
+            graph_spot, "magenta", timer_spot
+        )
+        if res:
+            st.session_state.paths[model_name_for_key] = res
+            st.session_state.scores[model_name_for_key] = algo.calculate_total_dist(res, st.session_state.cities)
+            st.session_state.times[model_name_for_key] = t
+            st.rerun()
     else:
-        # 실행 버튼 안 눌렀을 때, 기존 결과가 있으면 그림
+        # 실행 버튼을 누르지 않았을 때는 기존 결과를 보여주거나 빈 그래프를 그림
         if current_path:
-             graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, current_path, model_name_for_key, "magenta"), config=chart_config)
+            graph_spot.plotly_chart(
+                draw_tsp_plot(
+                    st.session_state.cities,
+                    current_path,
+                    model_name_for_key,
+                    "magenta"
+                ),
+                config=chart_config
+            )
         else:
-             graph_spot.plotly_chart(draw_tsp_plot(st.session_state.cities, [], "Neural Network Result", "magenta"), config=chart_config)
+            graph_spot.plotly_chart(
+                draw_tsp_plot(
+                    st.session_state.cities,
+                    [],
+                    "Neural Pointer Network Result",
+                    "magenta"
+                ),
+                config=chart_config
+            )
